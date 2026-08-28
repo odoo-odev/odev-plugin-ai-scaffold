@@ -16,6 +16,7 @@ from odev.plugins.odev_plugin_ai.common.mixins import AICommandMixin
 from odev.plugins.odev_plugin_ai_scaffold.common.analysis import Analysis, AnalysisFactory
 from odev.plugins.odev_plugin_ai_scaffold.common.analyze import Analyze
 from odev.plugins.odev_plugin_ai_scaffold.common.prompt_factory import PromptFactory
+from odev.plugins.odev_plugin_ai_scaffold.common.repository import ClientRepositoryMixin
 
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ plain remote one is reached by URL alone, neither of which tells where it runs.
 """
 
 
-class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, Analyze):
+class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, ClientRepositoryMixin, Analyze):
     """Analyze an Odoo task with an AI agent.
 
     The agent reads the task, the diagrams it links to and the standard source of the
@@ -68,14 +69,12 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, A
         super().__init__(args, **kwargs)
 
     def run(self) -> None:
-        if self.download_codebase and self.database_name and (clone_cls := self.odev.commands.get("clone")):
-            clone_args = {"database": self.database_name}
-            clone_cls(clone_args).run()
-
         analysis = self._load_analysis()
 
         if analysis is None:
             return
+
+        self._resolve_codebase(analysis)
 
         version = self._resolve_version(analysis)
         platform = self._resolve_platform(analysis)
@@ -289,6 +288,24 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, A
         # An analysis is still worth running for a client that refuses to be named.
         analysis.client_name = self.console.text("Name of the client:") or None
         return analysis.client_name
+
+    def _resolve_codebase(self, analysis: Analysis) -> None:
+        """Point the sandbox at the client code the task concerns, under ``--context``.
+
+        Which code that is cannot be worked out here: it takes the databases of the
+        task's subscription, read through Ps-Tools, and a hosted database willing to
+        name the repository its branch is built from. Both are private plugins, and one
+        of them overrides this to set :attr:`sandbox_repository`. Without it the
+        analysis is made from the task and the standard source alone, which is what the
+        version and the hosting are asked for.
+        """
+        if not self.download_codebase:
+            return
+
+        self.sandbox_repository = self._resolve_client_repository(analysis)
+
+        if self.sandbox_repository is None:
+            logger.warning("No client repository could be reached: analyzing task and standard source only.")
 
     def _get_artifacts_dir(self) -> Path | None:
         """Return the agent working directory, used to drop prompt artifacts.

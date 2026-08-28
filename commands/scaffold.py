@@ -51,27 +51,31 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
     def run(self) -> None:
         """Execute the scaffold command."""
         self._load_analysis()
+        self._resolve_scaffold_database()
 
         logger.info(
             f"Scaffolding a {'importable' if self.is_importable else 'python'} module for Odoo {self.target_version}..."
         )
 
+        # Worktrees are checked out per branch, and saas versions have no branch of
+        # their own here: a module for 17.2 is written against the source of 17.0.
+        source_branch = f"{self.target_version.major}.0" if self.target_version else None
         version_available: dict[str, bool] = {}
 
-        if self.target_version:
-            version_available = self._prepare_odoo_environment([str(self.target_version)])
+        if source_branch:
+            version_available = self._prepare_odoo_environment([source_branch])
 
         agent = self.get_ai_agent()
-        sandbox_dirs = self._get_sandbox_dirs(cwd=self.args.path)
-        artifacts_dir = Path(sandbox_dirs[0]) if sandbox_dirs else self.args.path.resolve()
+        sandbox_dirs = self._get_sandbox_dirs(self.scaffold_database_name, cwd=self.args.path)
+        working_dir = Path(sandbox_dirs[0]) if sandbox_dirs else self.args.path.resolve()
 
-        prompt_str = self._build_prompt(version_available, artifacts_dir)
+        prompt_str = self._build_prompt(version_available, working_dir, source_branch)
 
         database = self.args.database
         if database and not self._ensure_database_safety(database):
             database = None
 
-        prompt_str += self._verification_prompt(database)
+        prompt_str += self._verification_prompt(database, working_dir)
 
         logger.info(f"Delegating scaffolding to {self.args.cli}...")
 
@@ -85,7 +89,9 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
         if not success:
             logger.error("Scaffolding failed or was interrupted.")
 
-    def _build_prompt(self, version_available: dict[str, bool], artifacts_dir: Path) -> str:
+    def _build_prompt(
+        self, version_available: dict[str, bool], artifacts_dir: Path, source_branch: str | None
+    ) -> str:
         """Return the prompt describing what to build, and everything the task carries.
 
         The whole task goes in: its description, the images embedded in it and the
@@ -102,7 +108,7 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
             "\nWhere the task carries a technical analysis, that is what to build from; "
             "the rest is the context it was written in and tells you why.\n"
         )
-        prompt_str += f"\nThe module should be created in {self.args.path.resolve()}.\n"
+        prompt_str += f"\nThe module should be created in {artifacts_dir}.\n"
 
         if image_paths := analysis.save_embedded_images(artifacts_dir):
             prompt_str += (
@@ -122,22 +128,21 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
             prompt_str += f"Available dependencies for context are: {', '.join(self.depends_list)}.\n"
 
         if self.target_version:
-            version_str = str(self.target_version)
-            prompt_str += f"\nTarget Odoo version: {version_str}.\n"
+            prompt_str += f"\nTarget Odoo version: {self.target_version}.\n"
 
-            if version_available.get(version_str):
+            if source_branch and version_available.get(source_branch):
                 prompt_str += (
-                    f"Odoo reference source code is available at /worktrees/{version_str}/ "
+                    f"Odoo reference source code is available at /worktrees/{source_branch}/ "
                     "(subdirs: odoo/addons for Community, enterprise for Enterprise). "
                     "Use it to check correct model APIs, field types, and inheritance patterns.\n"
                 )
 
         return prompt_str + f"\nRequired Module Structure:\n{MODULE_STRUCTURE}"
 
-    def _verification_prompt(self, database: str | None) -> str:
+    def _verification_prompt(self, database: str | None, working_dir: Path) -> str:
         """Return the instructions telling the agent to check what it just wrote."""
         test_db = f"{database}_test" if database else "scaffold_test_db"
-        module_name = self.override_name or self.args.path.name
+        module_name = self.override_name or self._default_module_name(working_dir)
         version_flag = f"-V {self.target_version}" if self.target_version else ""
         template_flag = f"-t {database}" if database else ""
 
