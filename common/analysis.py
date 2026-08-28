@@ -18,7 +18,9 @@ from typing import Any
 
 import html2text
 
+from odev.common.console import console
 from odev.common.logging import logging
+from odev.common.version import OdooVersion
 
 from odev.plugins.odev_plugin_ai_scaffold.common.excalidraw import export_diagrams, find_diagram_urls
 from odev.plugins.odev_plugin_ai_scaffold.common.task import TaskReader
@@ -66,6 +68,8 @@ class Analysis:
     description: str | None
     excalidraw_urls: list[str]
     load_excalidraw: bool
+    existing_module_name: str
+    depends: list[str]
 
     def __init__(self, task_id: str, data: dict[str, Any], load_excalidraw: bool = True):
         self.data = data
@@ -79,6 +83,12 @@ class Analysis:
         self.platform = data.get("platform")
         self.load_excalidraw = load_excalidraw
         self.excalidraw_urls = []
+        self._database: dict[str, Any] | None = None
+        # Empty here: a task says nothing about which module to extend or what it
+        # depends on, so both come off the command line. A plugin reading a written
+        # analysis fills them in from it.
+        self.existing_module_name = ""
+        self.depends = []
         self.description = self.parse()
 
     def parse_owner(self) -> str | None:
@@ -161,3 +171,42 @@ class Analysis:
     def attachments(self) -> list[dict[str, Any]]:
         """Files attached to the task, as ``name`` / ``mimetype`` / ``datas`` dicts."""
         return self.data.get("attachments") or []
+
+    @property
+    def database(self) -> dict[str, Any] | None:
+        """The client database to work against, asking which one when there are several."""
+        if self._database is not None:
+            return self._database
+
+        databases = self.databases
+
+        if not databases:
+            return None
+
+        if len(databases) == 1:
+            self._database = databases[0]
+        else:
+            choices = [(db, f"{db.get('url')} ({db.get('hosting')})") for db in databases]
+            self._database = console.select("Select a database:", choices)
+
+        return self._database
+
+    @property
+    def database_url(self) -> str | None:
+        """URL of the client database to work against, if the task points at one."""
+        database = self.database
+        return database.get("url") if database else None
+
+    @property
+    def version(self) -> OdooVersion:
+        """The Odoo version to build for, falling back to master when nothing says."""
+        return OdooVersion(str(self.odoo_version or "master"))
+
+    @property
+    def importable_module(self) -> bool:
+        """Whether the result has to be importable rather than a python module.
+
+        SaaS takes no custom code, so what is built for it is data to import - views,
+        automations, server actions - rather than a module to install.
+        """
+        return self.platform == "saas"

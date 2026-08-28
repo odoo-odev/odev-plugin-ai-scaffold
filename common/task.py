@@ -1,11 +1,9 @@
 """Read the task an analysis is made from, straight off the tracker that holds it.
 
-This used to be somebody else's job: a Ps-Tools model exposed ``get_remote_analysis_data``
-over RPC and odev asked it for the task, because Ps-Tools was where the odoo.com
-credentials lived. Nothing about the work is Ps-Tools' though - it is ``project.task``
-and the subscription behind it, on the tracker itself - so it is done here now, with the
-credentials odev already keeps for that host, and the plugin no longer needs a proxy to
-read a task.
+The tracker is read directly, over RPC, with the credentials odev already keeps for that
+host - which one it is comes from ``[ai_scaffold] task_url`` in odev.cfg. No proxy is
+involved: reading a ``project.task`` and the subscription behind it is this plugin's own
+work, and routing it through a third database only moves whose credentials are needed.
 
 What the tracker cannot tell in one query is resolved on top of the raw fields: who the
 task is assigned to, which databases the customer's subscription carries, and from those
