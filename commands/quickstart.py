@@ -11,7 +11,6 @@ from odev.common.logging import logging
 from odev.common.mixins import ListLocalDatabasesMixin
 from odev.common.odoobin import OdoobinProcess
 
-from odev.plugins.odev_plugin_ai_scaffold.common.analysis import AnalysisFactory
 from odev.plugins.odev_plugin_ai_scaffold.common.scaffold import Scaffold
 from odev.plugins.odev_plugin_project.commands.pre_commit import COPIER_ANSWERS_FILE
 
@@ -49,7 +48,7 @@ class QuickStartScaffoldCommand(ListLocalDatabasesMixin, QuickStartCommand, Scaf
             args.task_id
             and not args.database
             and (
-                analysis_obj := AnalysisFactory.get_analysis(
+                analysis_obj := self.analysis_factory.get_analysis(
                     args.task_id,
                     task_url=self.config.ai_scaffold.task_url,
                     task_database=self.config.ai_scaffold.task_database,

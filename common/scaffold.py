@@ -74,6 +74,9 @@ class Scaffold(AICommandMixin):
     )
     task_id = args.String(description="Id of the task to scaffold from", nargs="?")
 
+    analysis_factory: type[AnalysisFactory] = AnalysisFactory
+    """Where analyses are read from. A plugin with another source swaps this out."""
+
     analysis_obj: Analysis | None = None
     depends_list: list[str] | None = None
     is_importable: bool = False
@@ -88,7 +91,7 @@ class Scaffold(AICommandMixin):
         """
         if not self.analysis_obj:
             with progress.spinner(f"Loading the analysis of task {self.args.task_id}"):
-                analysis_obj = AnalysisFactory.get_analysis(
+                analysis_obj = self.analysis_factory.get_analysis(
                     self.args.task_id,
                     task_url=self.config.ai_scaffold.task_url,
                     task_database=self.config.ai_scaffold.task_database,

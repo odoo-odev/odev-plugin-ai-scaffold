@@ -69,6 +69,6 @@ plugin that has both overrides three seams and nothing else:
 
 | Seam | For |
 | --- | --- |
-| `AnalysisFactory.get_analysis` | Reading a written analysis, falling back to the task |
+| `analysis_factory` on the commands | Reading analyses from somewhere else, falling back to the task |
 | `PromptFactory.extensions` | A mixin replacing `_get_reporting_prompt`, to deliver rather than print |
 | `AnalyzeCommand._get_mcp_servers` | The tools the agent delivers through |

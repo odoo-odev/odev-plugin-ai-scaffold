@@ -46,6 +46,9 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, A
     _name = "analyze"
     _database_arg_required = False
 
+    analysis_factory: type[AnalysisFactory] = AnalysisFactory
+    """Where analyses are read from. A plugin with another source swaps this out."""
+
     process: OdoobinProcess | None = None
     initiate_excalidraw: bool = True
     download_codebase: bool = False
@@ -112,10 +115,10 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, A
         """Return the analysis of the task, from wherever this odev knows to look.
 
         Its own seam, rather than a call inlined in :meth:`run`: a plugin holding
-        written analyses of its own overrides this - or the factory behind it - without
-        having to reimplement the rest of the command.
+        written analyses of its own swaps :attr:`analysis_factory`, or overrides this,
+        without having to reimplement the rest of the command.
         """
-        return AnalysisFactory.get_analysis(
+        return self.analysis_factory.get_analysis(
             self.args.task_id,
             task_url=self.config.ai_scaffold.task_url,
             task_database=self.config.ai_scaffold.task_database,
