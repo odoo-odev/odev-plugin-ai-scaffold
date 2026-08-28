@@ -53,6 +53,16 @@ DATABASE_VERSION = re.compile(r"\d+(?:\.\d+){1,3}")
 # Only the attachment id matters here; the rest is decoration.
 WEB_IMAGE_SRC = re.compile(r"/web/image/(?:ir\.attachment/)?(\d+)")
 
+MIMETYPE_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/svg+xml": ".svg",
+}
+
+
+def _extension(mimetype: str) -> str:
+    """Return the file extension an image of ``mimetype`` is saved under."""
+    return MIMETYPE_EXTENSIONS.get(mimetype, f".{mimetype.removeprefix('image/')}")
+
 
 class TaskReader:
     """Read a task and everything an analysis needs to know about it."""
@@ -81,11 +91,11 @@ class TaskReader:
 
         self._add_assignees(task)
         self._add_hosting(task)
+        self._add_description_images(task)
 
         # Many2one fields are read as an (id, display_name) pair.
         partner = task.get("partner_id")
         task["client"] = partner[1] if partner else None
-        task["description"] = self._inline_images(task.get("description"))
         task["attachments"] = self._attachments(task["id"])
 
         return task
@@ -193,7 +203,7 @@ class TaskReader:
 
         Attachments live in ir.attachment, so reading the task never includes them.
         ``res_field`` is False for a file added to the chatter, and set to the field
-        name for an image embedded in one, which :meth:`_inline_images` handles.
+        name for an image embedded in one, which :meth:`_add_description_images` handles.
         """
         try:
             return self.database.models["ir.attachment"].search_read(
@@ -208,21 +218,30 @@ class TaskReader:
             logger.debug(f"Could not read the attachments of task {task_id}.", exc_info=True)
             return []
 
-    def _inline_images(self, description: str | None) -> str | None:
-        """Replace the ``/web/image/<id>`` sources of ``description`` with data URIs.
+    def _add_description_images(self, task: dict[str, Any]) -> None:
+        """Pull the images out of the description, leaving a name where each one was.
 
         The images of a description are attachments on the tracker, reachable neither
-        by a relative url nor without credentials: inlined here, the description is
-        self-contained, and :class:`~.analysis.Analysis` writes them back out as files
-        the agent can open.
+        by a relative url nor without credentials, so they have to be fetched. They are
+        kept beside the description rather than inlined into it as data URIs: an agent
+        cannot read a data URI as an image anyway, and a couple of screenshots in
+        base64 are enough to blow past the 128kB the kernel allows the prompt, which
+        reaches the agent CLI as a single command line argument.
+
+        What the description keeps is the name of the file each image became, so the
+        text still says where the picture belonged. :class:`~.analysis.Analysis` writes
+        those files out next to the prompt.
         """
+        task["description_images"] = []
+        description = task.get("description")
+
         if not description:
-            return description
+            return
 
         attachment_ids = {int(match) for match in WEB_IMAGE_SRC.findall(description)}
 
         if not attachment_ids:
-            return description
+            return
 
         try:
             attachments = self.database.models["ir.attachment"].read(
@@ -231,21 +250,41 @@ class TaskReader:
             )
         except Exception:  # noqa: BLE001 - a missing image must not cost us the description
             logger.debug(f"Could not read the images {sorted(attachment_ids)}.", exc_info=True)
-            return description
+            return
 
-        data_uris = {
-            attachment["id"]: f"data:{attachment['mimetype'] or 'image/png'};base64,{attachment['datas']}"
-            for attachment in attachments
-            if attachment.get("datas")
-        }
+        images = {attachment["id"]: attachment for attachment in attachments if attachment.get("datas")}
 
-        if not data_uris:
-            return description
+        if not images:
+            return
+
+        # Numbered in the order they appear, and once per attachment: the same image
+        # used twice in a description is one file referred to twice, not two files.
+        names: dict[int, str] = {}
 
         def replace(match: re.Match[str]) -> str:
-            # Leave unknown ids untouched rather than producing a broken src.
-            return data_uris.get(int(match.group(1)), match.group(0))
+            attachment_id = int(match.group(1))
+
+            # Leave an unknown id untouched rather than name a file that is not there.
+            if attachment_id not in images:
+                return match.group(0)
+
+            if attachment_id not in names:
+                attachment = images[attachment_id]
+                mimetype = attachment.get("mimetype") or "image/png"
+                names[attachment_id] = f"embedded-image-{len(names) + 1}{_extension(mimetype)}"
+                task["description_images"].append(
+                    {
+                        "name": names[attachment_id],
+                        "mimetype": mimetype,
+                        "datas": attachment["datas"],
+                    }
+                )
+
+            return names[attachment_id]
 
         # The regex matches the /web/image/<id> prefix only, so drop whatever trailed
         # it (/name.png, /datas, ?access_token=...) up to the quote.
-        return re.sub(rf"{WEB_IMAGE_SRC.pattern}[^\"'\s>]*", replace, description)
+        task["description"] = re.sub(rf"{WEB_IMAGE_SRC.pattern}[^\"'\s>]*", replace, description)
+
+        if task["description_images"]:
+            logger.info(f"Extracted {len(task['description_images'])} image(s) embedded in the description.")

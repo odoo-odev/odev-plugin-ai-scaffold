@@ -1,0 +1,104 @@
+minimum_pre_commit_version: "2"
+default_language_version:
+    python: python3
+    node: 18.0.0
+
+default_stages: [pre-commit]
+fail_fast: false
+
+exclude: |
+  ^(\.vscode|\.github)|
+  ^(LICENSE.*|COPYING.*)$|
+  ^\.codespell-whitelist\.txt$|
+  ^\.coveragerc$|
+  ^\.eslintrc\.yaml$|
+  ^\.gitignore$|
+  ^\.isort.cfg$|
+  ^\.pre-commit-config\.yaml$|
+  ^\.prettierrc\.cjs$|
+  ^\.pylintrc$|
+  ^\.ruff_cache/|
+  ^\.ruff\.toml$|
+  ^migrations/util.py$|
+  ^node_modules/|
+  ^package(-lock)?\.json$|
+  ^setup/|
+  ^static/(src/)?lib/|
+  ^static/description/index\.html$|
+  ^tests/resources/
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.13.2
+    hooks:
+      - id: ruff
+        name: ruff-required
+        args:
+          - --config=.ruff.toml
+          - --ignore=ERA,D,FBT002,UP031,SIM108,RUF100
+          - --fix
+          - --exit-non-zero-on-fix
+
+      - id: ruff
+        name: ruff-optional
+        args:
+          - --config=.ruff.toml
+          - --select=ERA,D,FBT002,UP031,SIM108
+          - --ignore=D1,D203,D205,D212,RUF100
+          - --no-fix
+          - --exit-zero
+
+      - id: ruff
+        name: ruff-cleanups
+        args:
+          - --config=.ruff.toml
+          - --fix
+          - --silent
+          - --exit-zero
+
+      - id: ruff-format
+        name: ruff-format
+        args:
+          - --config=.ruff.toml
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-xml
+      - id: check-yaml
+      - id: debug-statements
+      - id: destroyed-symlinks
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: fix-byte-order-marker
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: name-tests-test
+        args: [--pytest-test-first]
+        exclude: ^tests/(resources|fixtures)/
+      - id: requirements-txt-fixer
+      - id: trailing-whitespace
+      - id: pretty-format-json
+        args: [--autofix]
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        name: codespell
+        exclude: ((sh_upgrade|util)\.py|\.jinja)$
+        args:
+          - --ignore-words=./.codespell-whitelist.txt
+          - --skip="*.svg,*.po,*.pot,*.json,*.xml,*.yml,*.yaml,*.ini,*.cfg,*.conf,*.toml,*.lock,*.txt,*.md,*.rst,*.jinja,*.pyc,*.pyo,*.exe"
+          - --check-filenames
+
+  - repo: https://github.com/Lucas-C/pre-commit-hooks-safety
+    rev: v1.4.2
+    hooks:
+      - id: python-safety-dependencies-check

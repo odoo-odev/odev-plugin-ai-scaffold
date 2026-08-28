@@ -28,15 +28,8 @@ logger = logging.getLogger(__name__)
 
 EXCALIDRAW_URL = re.compile(r"(https://app\.excalidraw\.com/[A-Za-z0-9/_\-#=]+)")
 
-# The task reader inlines the images of the description as data URIs, so that the
-# description travels as one self-contained string rather than a set of urls needing
-# credentials to follow. This is where they are turned back into files.
-IMAGE_DATA_URI = re.compile(r"data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)")
-
-MIMETYPE_EXTENSIONS = {
-    "image/jpeg": ".jpg",
-    "image/svg+xml": ".svg",
-}
+MANY2ONE_PAIR_SIZE = 2
+"""A many2one field is read over RPC as an ``(id, display_name)`` pair."""
 
 
 class AnalysisFactory:
@@ -73,7 +66,6 @@ class Analysis:
     odoo_version: str | None
     platform: str | None
     description: str | None
-    embedded_images: list[tuple[str, str]]
     excalidraw_url: str | None
     load_excalidraw: bool
 
@@ -89,7 +81,6 @@ class Analysis:
         self.platform = data.get("platform")
         self.load_excalidraw = load_excalidraw
         self.excalidraw_url = None
-        self.embedded_images = []
         self.description = self.parse()
 
     def parse_owner(self) -> str | None:
@@ -99,7 +90,7 @@ class Analysis:
 
         # Many2one fields are read as an (id, display_name) pair.
         create_uid = self.data.get("create_uid")
-        if isinstance(create_uid, list | tuple) and len(create_uid) == 2:
+        if isinstance(create_uid, list | tuple) and len(create_uid) == MANY2ONE_PAIR_SIZE:
             return str(create_uid[1])
 
         return None
@@ -119,45 +110,23 @@ class Analysis:
             self.excalidraw_url = match.group(1)
             logger.info(f"Excalidraw url found in the description: {self.excalidraw_url}")
 
-        description_html = self.extract_embedded_images(description_html)
-
         h = html2text.HTML2Text()
         h.ignore_links = True
         return h.handle(description_html).strip()
 
-    def extract_embedded_images(self, description_html: str) -> str:
-        """Move the data URIs of the description into :attr:`embedded_images`.
-
-        The agent CLI takes the prompt as a single command line argument, which the
-        kernel caps at 128kB: a couple of screenshots inlined as base64 are enough to
-        get the whole run killed with E2BIG. They would be dead weight anyway, as an
-        agent cannot read a data URI as an image. Replace each of them with a
-        placeholder here, and :meth:`save_embedded_images` writes them next to the
-        prompt as files the agent can actually open.
-        """
-
-        def replace(match: re.Match[str]) -> str:
-            self.embedded_images.append((match.group(1), match.group(2)))
-            return f"embedded-image-{len(self.embedded_images)}"
-
-        description_html, count = IMAGE_DATA_URI.subn(replace, description_html)
-
-        if count:
-            logger.info(f"Extracted {count} image(s) embedded in the description.")
-
-        return description_html
-
     def save_embedded_images(self, artifacts_dir: Path) -> list[Path]:
-        """Write the extracted images to ``artifacts_dir`` and return their paths."""
+        """Write the images of the description to ``artifacts_dir``, return their paths.
+
+        The description refers to each of them by the file name written here, so the
+        agent can open the picture the text is talking about.
+        """
         image_paths: list[Path] = []
 
-        for index, (mimetype, payload) in enumerate(self.embedded_images, start=1):
-            extension = MIMETYPE_EXTENSIONS.get(mimetype, f".{mimetype.removeprefix('image/')}")
-            image_path = artifacts_dir / f"embedded-image-{index}{extension}"
+        for image in self.embedded_images:
+            image_path = artifacts_dir / image["name"]
 
             try:
-                # The base64 of a data URI may be split over several lines.
-                image_path.write_bytes(base64.b64decode("".join(payload.split())))
+                image_path.write_bytes(base64.b64decode(image["datas"]))
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Could not save the image embedded in the description: {e}")
                 continue
@@ -165,6 +134,14 @@ class Analysis:
             image_paths.append(image_path)
 
         return image_paths
+
+    @property
+    def embedded_images(self) -> list[dict[str, Any]]:
+        """Images pulled out of the description, as ``name`` / ``mimetype`` / ``datas``.
+
+        The description refers to each by its ``name``, where the picture stood.
+        """
+        return self.data.get("description_images") or []
 
     @property
     def databases(self) -> list[dict[str, Any]]:
