@@ -132,10 +132,12 @@ def _browser(odev=None) -> Iterator[Any]:
 
 
 def _odev_chrome(odev=None) -> str | None:
-    """Return the Chrome odev provisions for tours, or None to use Playwright's own.
+    """Return the Chrome odev provisions, or None to use Playwright's own.
 
-    Provisioning downloads it the first time, which is the same cost as installing a
-    Playwright browser except that this one is shared with `odev test`.
+    Under a spinner because the first call downloads the browser, and ``Chrome.provision``
+    captures the output of the npx doing it: without one, a first run sits silent for the
+    length of a 150MB download with nothing on screen to say why. The message says which
+    download it is, since a wait that explains itself is a different thing from a hang.
     """
     if odev is None:
         return None
@@ -143,10 +145,22 @@ def _odev_chrome(odev=None) -> str | None:
     try:
         from odev.common.browsers import Chrome  # noqa: PLC0415
 
-        executable = Chrome(odev).provision()
+        with progress.spinner("Preparing the browser") as status:
+            chrome = Chrome(odev)
+
+            if not chrome.executable.exists():
+                status.update(
+                    f"Downloading Chrome {chrome.version} - first run only, "
+                    "and shared with the browser odev runs tours with"
+                )
+
+            executable = chrome.provision()
     except Exception as e:  # noqa: BLE001 - Playwright's own Chromium is a fine fallback
         logger.debug(f"Could not provision odev's Chrome: {e}", exc_info=True)
         return None
+
+    if not executable:
+        logger.debug("odev has no Chrome to lend, falling back on Playwright's own Chromium.")
 
     return str(executable) if executable else None
 
