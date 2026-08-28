@@ -19,25 +19,28 @@ from odev.plugins.odev_plugin_ai_scaffold.common.analysis import Analysis
 
 logger = logging.getLogger(__name__)
 
-PLATFORM_RULES = {
-    "saas": (
-        "Odoo Online (SaaS): no custom module and no custom code are deployable, "
-        "so everything has to be achieved with Studio, automation rules and "
-        "server actions. Say so explicitly for any requirement that cannot be."
-    ),
-    "sh": (
-        "Odoo.sh: a custom module is deployable, and the estimation has to account "
-        "for the branch, the build and the deployment of that module. Account for "
-        "that once - its own line, or a caveat in the analysis - never folded into "
-        "the description or estimate of an unrelated one: a post_init_hook stays "
-        "scoped to what its code does, not to how the module reaches the client."
-    ),
-    "op": (
-        "On-Premise: a custom module is deployable, but nothing about the hosting, "
-        "the deployment or the third-party modules already installed can be assumed."
-    ),
+ANALYSIS_SKILL = "odoo_task_analysis"
+"""Skill holding the method an analysis follows, everything this prompt does not.
+
+What to read before concluding, what each hosting allows, how an estimate is grounded and
+what the analysis has to contain do not change from one run to the next, and were carried
+in this prompt as prose duplicated wherever an analysis is built. They live in the skills
+repo now, editable without a plugin release; the prompt is left with the facts of the run.
+"""
+
+PLATFORM_LABELS = {
+    "saas": "Odoo Online (SaaS)",
+    "sh": "Odoo.sh",
+    "op": "On-Premise",
 }
-"""What each hosting allows, keyed by the platform of the client's database."""
+"""How each hosting is named to the agent, keyed by the platform of the client's database.
+
+Only the name: what the hosting allows is a section of the analysis skill, and the agent is
+pointed at the entry rather than handed a paragraph that has to be kept in step with it.
+"""
+
+SAAS_SKILL = "odoo_saas_development"
+"""Skill describing what a data-only importable module can express, loaded for SaaS runs."""
 
 
 class BasePrompt:
@@ -137,7 +140,7 @@ class BasePrompt:
         if self.version:
             points.append(f"Target Odoo version: {self.version}")
         if self.platform:
-            points.append(f"Hosting: {PLATFORM_RULES.get(self.platform, self.platform)}")
+            points.append(f"Hosting: {PLATFORM_LABELS.get(self.platform, self.platform)}")
         if analysis.description:
             points.append(f"Task description:\n{analysis.description}")
 
@@ -147,15 +150,22 @@ class BasePrompt:
         points = [
             "You are tasked with analyzing the provided data, requirements, and diagrams "
             "to perform a comprehensive Odoo development analysis.",
-            "Read the relevant source code available in your working directory before drawing conclusions.",
-            "Identify the impacted Odoo models, views, and modules, and flag any missing requirement.",
+            f"Work by the method defined in your `{ANALYSIS_SKILL}` skill: what to read before drawing a "
+            "conclusion, what the hosting allows, how an estimate is grounded and what the analysis has to "
+            "contain are all there. This prompt carries the facts of this run, not the method.",
         ]
+
+        if self.platform:
+            points.append(
+                f"Read the {PLATFORM_LABELS.get(self.platform, self.platform)} entry of that skill's hosting "
+                "section before proposing an implementation"
+                + (f", and the `{SAAS_SKILL}` skill it sends you to." if self.platform == "saas" else ".")
+            )
 
         if self.source_path:
             points.append(
                 f"The standard Odoo {self.version or ''} source is mounted read-only at {self.source_path} "
-                "(odoo/, enterprise/ and design-themes/). Read it to tell what Odoo already does from what "
-                "has to be built: only the second is estimated. Do not attempt to modify it."
+                "(odoo/, enterprise/ and design-themes/), which is the source the skill tells you to read."
             )
 
         return points
@@ -207,19 +217,10 @@ class BasePrompt:
         recording anywhere. A plugin that has somewhere to deliver it to overrides this.
         """
         return [
-            "Write the analysis as markdown, in your response, structured per functional requirement.",
-            "For each requirement, state the impacted models and fields, the proposed implementation, "
-            "and an estimate in hours.",
-            "Ground each estimate in the lines of code the requirement takes to write, not a round "
-            f"guess: count the lines, divide by a throughput of {self.loc_per_hour_python:g} Python "
-            f"lines/hour, {self.loc_per_hour_xml:g} XML lines/hour or {self.loc_per_hour_js:g} JavaScript "
-            "lines/hour - whichever the code is written in - and round to the nearest quarter hour.",
-            f"The total development time should not fall below {self.minimum_dev_hours:g} hours: even a "
-            "small requirement carries setup, testing and review overhead that per-line estimates alone "
-            "tend to undercut. Raise the smallest item rather than inflate every one.",
-            "Say once, up front, whether this is built as a new custom module or as a change to one that "
-            "already exists - read the source at hand rather than guessing. A new module is the default; "
-            "name an existing one only when extending it genuinely makes more sense.",
-            "State the assumptions you had to make and the requirements you left out of the estimation. "
-            "Keep that to a few sentences: it is read next to the analysis, not instead of it.",
+            "Write the analysis as markdown, in your response, structured as the "
+            f"`{ANALYSIS_SKILL}` skill says an analysis is structured.",
+            "Estimate with a throughput of "
+            f"{self.loc_per_hour_python:g} Python lines/hour, {self.loc_per_hour_xml:g} XML lines/hour and "
+            f"{self.loc_per_hour_js:g} JavaScript lines/hour, and a floor of {self.minimum_dev_hours:g} hours "
+            "on the total development time.",
         ]

@@ -13,6 +13,7 @@ they see why the export took as long as it did, or where it gave up.
 from __future__ import annotations
 
 import re
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -120,7 +121,19 @@ def _browser(odev=None) -> Iterator[Any]:
     playwright = sync_playwright().start()
 
     try:
-        browser = playwright.chromium.launch(headless=True, executable_path=executable)
+        try:
+            browser = playwright.chromium.launch(headless=True, executable_path=executable)
+        except Exception as e:  # noqa: BLE001 - Playwright's own message is a wall of ASCII art
+            if executable:
+                raise
+
+            # No Chrome from odev, and Playwright's Chromium was never downloaded: its own
+            # error is a stack trace and a banner telling the user to install a browser they
+            # never asked for. Say which command fixes it, in the venv odev actually runs in.
+            raise RuntimeError(
+                "odev has no Chrome to lend and Playwright's own Chromium is not installed. "
+                f"Run `{Path(sys.executable).parent / 'playwright'} install chromium` to get one."
+            ) from e
 
         try:
             yield browser
@@ -168,6 +181,13 @@ def _odev_chrome(odev=None) -> str | None:
 def _export_one(browser: Any, url: str) -> bytes | None:
     """Open ``url`` and drive Excalidraw's own PNG export, returning the image bytes."""
     page = browser.new_page()
+
+    # Excalidraw saves through ``browser-fs-access``, which reaches for the File System
+    # Access API when the browser has it - and Chrome has it. That opens the native save
+    # dialog, which a headless browser has no way to answer: the call is aborted, no file
+    # is ever written, and the export waits for a download that will never come. Hidden,
+    # the library falls back on a blob download, which is the one Playwright can catch.
+    page.add_init_script("delete window.showSaveFilePicker; delete window.showOpenFilePicker;")
 
     try:
         logger.debug(f"Loading {url}")

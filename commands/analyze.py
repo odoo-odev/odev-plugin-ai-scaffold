@@ -16,6 +16,7 @@ from odev.plugins.odev_plugin_ai.common.mixins import AICommandMixin
 from odev.plugins.odev_plugin_ai_scaffold.common.analysis import Analysis, AnalysisFactory
 from odev.plugins.odev_plugin_ai_scaffold.common.analyze import Analyze
 from odev.plugins.odev_plugin_ai_scaffold.common.prompt_factory import PromptFactory
+from odev.plugins.odev_plugin_ai_scaffold.common.prompts.base import ANALYSIS_SKILL, SAAS_SKILL
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, A
 
     _name = "analyze"
     _database_arg_required = False
+    required_skills = [*AICommandMixin.required_skills, ANALYSIS_SKILL]
 
     analysis_factory: type[AnalysisFactory] = AnalysisFactory
     """Where analyses are read from. A plugin with another source swaps this out."""
@@ -88,6 +90,11 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, A
         )
 
         source_path = self._resolve_odoo_source(version)
+
+        if platform == "saas":
+            # The analysis skill sends a SaaS run to this one for what a data-only module
+            # can express; asked for here so the agent has it when it gets there.
+            self.required_skills = [*self.required_skills, SAAS_SKILL]
 
         compiled_request = PromptFactory.build_analysis_prompt(
             analysis,
