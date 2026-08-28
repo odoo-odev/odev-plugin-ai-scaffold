@@ -26,8 +26,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-EXCALIDRAW_URL = re.compile(r"https://app\.excalidraw\.com/[A-Za-z0-9/_\-#=]+")
-"""Matches an Excalidraw board linked from a task description."""
+EXCALIDRAW_URL = re.compile(r"https://app\.excalidraw\.com/[A-Za-z0-9/_\-#=]+(?:,[A-Za-z0-9_\-]+)?")
+"""Matches an Excalidraw board linked from a task description.
+
+The trailing group is the encryption key of a collaboration link, whose fragment reads
+``#room=<id>,<key>``. Without it the board cannot be decrypted and the export opens an
+empty canvas, so the comma is taken only when a key actually follows it - never the
+comma that merely ends a sentence the url happens to sit in.
+"""
 
 DIAGRAM_FILENAME = "excalidraw-diagram-{index}.png"
 """What an exported diagram is called, numbered in the order the description links it."""
