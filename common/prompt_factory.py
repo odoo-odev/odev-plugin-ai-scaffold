@@ -29,14 +29,14 @@ class PromptFactory:
     """
 
     @classmethod
-    def get_prompt_generator(cls, version: OdooVersion | None = None) -> BasePrompt:
+    def get_prompt_generator(cls, version: OdooVersion | None = None, odev=None) -> BasePrompt:
         """Return the prompt generator for ``version``, extensions included."""
         prompt_class = cls._version_prompt_class(version)
 
         if cls.extensions:
             prompt_class = type("Prompt", (*cls.extensions, prompt_class), {})
 
-        return prompt_class(version)
+        return prompt_class(version, odev)
 
     @classmethod
     def _version_prompt_class(cls, version: OdooVersion | None = None) -> type[BasePrompt]:
@@ -80,9 +80,10 @@ class PromptFactory:
         loc_per_hour_xml: float | None = None,
         loc_per_hour_js: float | None = None,
         minimum_dev_hours: float | None = None,
+        odev=None,
     ) -> str:
         """Build the agent prompt for a given task analysis."""
-        return cls.get_prompt_generator(version).build_prompt(
+        return cls.get_prompt_generator(version, odev).build_prompt(
             analysis,
             artifacts_dir,
             platform,

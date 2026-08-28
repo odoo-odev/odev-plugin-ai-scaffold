@@ -146,13 +146,16 @@ class Analysis:
 
         return image_paths
 
-    def export_excalidraw_diagrams(self, artifacts_dir: Path) -> list[Path]:
+    def export_excalidraw_diagrams(self, artifacts_dir: Path, odev=None) -> list[Path]:
         """Export every diagram the description links to, and return their paths.
 
         A diagram is a live document, not something the description can carry: the
         board is opened in a browser and exported through Excalidraw itself.
+
+        :param odev: The odev instance, so the export reuses the Chrome odev already
+            provisions rather than installing a browser of its own.
         """
-        return export_diagrams(self.excalidraw_urls, artifacts_dir)
+        return export_diagrams(self.excalidraw_urls, artifacts_dir, odev)
 
     @property
     def embedded_images(self) -> list[dict[str, Any]]:

@@ -47,8 +47,9 @@ class BasePrompt:
     plugin tailors it for wherever the analysis has to end up.
     """
 
-    def __init__(self, version: OdooVersion | None = None):
+    def __init__(self, version: OdooVersion | None = None, odev=None):
         self.version = version
+        self.odev = odev
         self.platform: str | None = None
         self.source_path: Path | None = None
         # Overridable defaults: the command passes the user's odev.cfg values through
@@ -186,7 +187,7 @@ class BasePrompt:
         if artifacts_dir is None or not self.analysis_obj.excalidraw_urls:
             return []
 
-        diagram_paths = self.analysis_obj.export_excalidraw_diagrams(artifacts_dir)
+        diagram_paths = self.analysis_obj.export_excalidraw_diagrams(artifacts_dir, self.odev)
 
         if not diagram_paths:
             return []

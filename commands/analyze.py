@@ -99,6 +99,7 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, A
             loc_per_hour_xml=self.config.ai_scaffold.loc_per_hour_xml,
             loc_per_hour_js=self.config.ai_scaffold.loc_per_hour_js,
             minimum_dev_hours=self.config.ai_scaffold.minimum_dev_hours,
+            odev=self.odev,
         )
 
         self.run_ai_agent(

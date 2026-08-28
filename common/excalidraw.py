@@ -60,13 +60,16 @@ def find_diagram_urls(description: str | None) -> list[str]:
     return list(dict.fromkeys(EXCALIDRAW_URL.findall(description)))
 
 
-def export_diagrams(urls: list[str], directory: Path) -> list[Path]:
+def export_diagrams(urls: list[str], directory: Path, odev=None) -> list[Path]:
     """Export each board of ``urls`` to a PNG in ``directory``, and return the paths.
 
-    One browser for all of them: launching Firefox is most of the cost, and a task
-    linking four diagrams should not pay it four times. A board that cannot be exported
-    is skipped with a warning rather than failing the run - an analysis without its
-    diagram is worth more than no analysis.
+    One browser for all of them: launching it is most of the cost, and a task linking
+    four diagrams should not pay it four times. A board that cannot be exported is
+    skipped with a warning rather than failing the run - an analysis without its diagram
+    is worth more than no analysis.
+
+    :param odev: The odev instance, to reuse the Chrome it provisions. Falls back on
+        Playwright's own bundled Chromium when not given, or when odev has none.
     """
     if not urls:
         return []
@@ -74,7 +77,7 @@ def export_diagrams(urls: list[str], directory: Path) -> list[Path]:
     paths: list[Path] = []
 
     try:
-        with _browser() as browser:
+        with _browser(odev) as browser:
             for index, url in enumerate(urls, start=1):
                 label = f"Exporting Excalidraw diagram {index}/{len(urls)}"
 
@@ -99,17 +102,25 @@ def export_diagrams(urls: list[str], directory: Path) -> list[Path]:
 
 
 @contextmanager
-def _browser() -> Iterator[Any]:
-    """Start Playwright and yield a Firefox instance, closing both afterwards."""
+def _browser(odev=None) -> Iterator[Any]:
+    """Start Playwright and yield a Chrome instance, closing both afterwards.
+
+    Chrome, and where possible the very build odev already provisions for tours - the
+    version Runbot pins - rather than a browser of our own. It is what Odoo is developed
+    against, and reusing it means no second browser to install: `playwright install` is
+    only needed when odev has no Chrome to lend.
+    """
     # Imported here rather than at module level: Playwright is a heavy import, and a
     # task linking no diagram should not pay for it just to load the plugin.
     from playwright.sync_api import sync_playwright  # noqa: PLC0415
 
-    logger.debug("Starting Playwright (Firefox)")
+    executable = _odev_chrome(odev)
+
+    logger.debug(f"Starting Playwright (Chrome{f' at {executable}' if executable else ', bundled'})")
     playwright = sync_playwright().start()
 
     try:
-        browser = playwright.firefox.launch(headless=True)
+        browser = playwright.chromium.launch(headless=True, executable_path=executable)
 
         try:
             yield browser
@@ -118,6 +129,26 @@ def _browser() -> Iterator[Any]:
     finally:
         playwright.stop()
         logger.debug("Stopped Playwright")
+
+
+def _odev_chrome(odev=None) -> str | None:
+    """Return the Chrome odev provisions for tours, or None to use Playwright's own.
+
+    Provisioning downloads it the first time, which is the same cost as installing a
+    Playwright browser except that this one is shared with `odev test`.
+    """
+    if odev is None:
+        return None
+
+    try:
+        from odev.common.browsers import Chrome  # noqa: PLC0415
+
+        executable = Chrome(odev).provision()
+    except Exception as e:  # noqa: BLE001 - Playwright's own Chromium is a fine fallback
+        logger.debug(f"Could not provision odev's Chrome: {e}", exc_info=True)
+        return None
+
+    return str(executable) if executable else None
 
 
 def _export_one(browser: Any, url: str) -> bytes | None:

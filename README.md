@@ -25,11 +25,16 @@ task_database =
 itself. Credentials are the ones odev already keeps for that host, asked for once and
 stored, the same way as for any other remote database.
 
-Exporting the Excalidraw diagrams a task links to needs a browser:
+Exporting the Excalidraw diagrams a task links to needs a browser. odev already
+provisions one - the Chrome build Runbot pins, shared with `odev test` - and the export
+reuses it, so there is usually nothing to install:
 
 ```console
-$ pip install -r requirements.txt && playwright install firefox
+$ pip install -r requirements.txt
 ```
+
+If odev has no Chrome to lend (no `npx`, or provisioning failed), Playwright falls back
+on its own bundled Chromium: `playwright install chromium`.
 
 ## What the agent is given
 
@@ -41,7 +46,7 @@ not separable without losing something:
   from the description by that same file name so it knows which picture goes where
 - **the Excalidraw diagrams it links to**, all of them, exported to PNG through a real
   browser - there is no url that hands back a picture, so the board is opened and its
-  own export driven
+  own export driven, in the same Chrome odev uses for tours
 - **the standard Odoo source** of the target version, mounted read-only, so the agent can
   tell what Odoo already does from what has to be built - only the second is estimated
 - **the client's database**, optionally (`--context`), cloned and given as context

@@ -111,7 +111,7 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
                 "to each by that same file name, where the picture belonged.\n"
             )
 
-        if diagram_paths := analysis.export_excalidraw_diagrams(artifacts_dir):
+        if diagram_paths := analysis.export_excalidraw_diagrams(artifacts_dir, self.odev):
             prompt_str += (
                 f"\n{len(diagram_paths)} Excalidraw architecture diagram(s) were exported for you to: "
                 f"{', '.join(str(path) for path in diagram_paths)}. Read those images and make sure "
