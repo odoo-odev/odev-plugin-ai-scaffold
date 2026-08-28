@@ -69,7 +69,7 @@ class PromptFactory:
         return BasePrompt
 
     @classmethod
-    def build_analysis_prompt(
+    def build_analysis_prompt(  # noqa: PLR0913 - mirrors BasePrompt.build_prompt
         cls,
         analysis: Analysis,
         version: OdooVersion | None = None,

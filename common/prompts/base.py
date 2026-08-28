@@ -58,7 +58,7 @@ class BasePrompt:
         self.loc_per_hour_js: float = 20
         self.minimum_dev_hours: float = 4
 
-    def build_prompt(
+    def build_prompt(  # noqa: PLR0913 - the estimation throughputs all come from odev.cfg
         self,
         analysis_obj: Analysis,
         artifacts_dir: Path | None = None,
