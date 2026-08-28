@@ -13,7 +13,6 @@ first and fall back to the task.
 from __future__ import annotations
 
 import base64
-import re
 from pathlib import Path
 from typing import Any
 
@@ -21,12 +20,11 @@ import html2text
 
 from odev.common.logging import logging
 
+from odev.plugins.odev_plugin_ai_scaffold.common.excalidraw import export_diagrams, find_diagram_urls
 from odev.plugins.odev_plugin_ai_scaffold.common.task import TaskReader
 
 
 logger = logging.getLogger(__name__)
-
-EXCALIDRAW_URL = re.compile(r"(https://app\.excalidraw\.com/[A-Za-z0-9/_\-#=]+)")
 
 MANY2ONE_PAIR_SIZE = 2
 """A many2one field is read over RPC as an ``(id, display_name)`` pair."""
@@ -66,7 +64,7 @@ class Analysis:
     odoo_version: str | None
     platform: str | None
     description: str | None
-    excalidraw_url: str | None
+    excalidraw_urls: list[str]
     load_excalidraw: bool
 
     def __init__(self, task_id: str, data: dict[str, Any], load_excalidraw: bool = True):
@@ -80,7 +78,7 @@ class Analysis:
         self.odoo_version = data.get("odoo_version")
         self.platform = data.get("platform")
         self.load_excalidraw = load_excalidraw
-        self.excalidraw_url = None
+        self.excalidraw_urls = []
         self.description = self.parse()
 
     def parse_owner(self) -> str | None:
@@ -102,13 +100,16 @@ class Analysis:
         if not description_html or not isinstance(description_html, str):
             return ""
 
-        # Only the url is looked for here. Playwright is started later, when the diagram
-        # is actually fetched: starting its sync API while the command may still prompt
-        # for the version, platform or client leaves asyncio in a state where those
-        # prompts fail with "asyncio.run() cannot be called from a running event loop".
-        if self.load_excalidraw and (match := EXCALIDRAW_URL.search(description_html)):
-            self.excalidraw_url = match.group(1)
-            logger.info(f"Excalidraw url found in the description: {self.excalidraw_url}")
+        # Only the urls are collected here. Playwright is started later, when the
+        # diagrams are actually exported: starting its sync API while the command may
+        # still prompt for the version, platform or client leaves asyncio in a state
+        # where those prompts fail with "asyncio.run() cannot be called from a running
+        # event loop".
+        if self.load_excalidraw:
+            self.excalidraw_urls = find_diagram_urls(description_html)
+
+            if self.excalidraw_urls:
+                logger.info(f"Found {len(self.excalidraw_urls)} Excalidraw url(s) in the description.")
 
         h = html2text.HTML2Text()
         h.ignore_links = True
@@ -134,6 +135,14 @@ class Analysis:
             image_paths.append(image_path)
 
         return image_paths
+
+    def export_excalidraw_diagrams(self, artifacts_dir: Path) -> list[Path]:
+        """Export every diagram the description links to, and return their paths.
+
+        A diagram is a live document, not something the description can carry: the
+        board is opened in a browser and exported through Excalidraw itself.
+        """
+        return export_diagrams(self.excalidraw_urls, artifacts_dir)
 
     @property
     def embedded_images(self) -> list[dict[str, Any]]:
