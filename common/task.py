@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from odev.common import progress
 from odev.common.databases import RemoteDatabase
@@ -62,13 +63,26 @@ def _extension(mimetype: str) -> str:
     return MIMETYPE_EXTENSIONS.get(mimetype, f".{mimetype.removeprefix('image/')}")
 
 
+def _database_name(url: str) -> str:
+    """Return a name for the tracker, for odev to file its credentials under.
+
+    Left to itself, RemoteDatabase names a database after the first label of its url,
+    which for ``https://www.odoo.com`` is ``www`` - a prompt asking for the password of
+    a database called "www" tells the reader nothing about what is being asked for.
+    Name it after the host instead, and let ``[ai_scaffold] task_database`` override
+    that where the real database name matters.
+    """
+    host = urlparse(url if "//" in url else f"https://{url}").netloc.partition(":")[0]
+    return host.removeprefix("www.") or url
+
+
 class TaskReader:
     """Read a task and everything an analysis needs to know about it."""
 
     database: RemoteDatabase
 
     def __init__(self, url: str, database_name: str | None = None):
-        self.database = RemoteDatabase(url, database_name or None)
+        self.database = RemoteDatabase(url, database_name or _database_name(url))
 
     def read(self, task_id: str) -> dict[str, Any] | None:
         """Return the task ``task_id``, resolved, or None when there is no such task."""
