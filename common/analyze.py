@@ -14,7 +14,8 @@ class Analyze:
     )
     context = args.Flag(
         aliases=["-c", "--context"],
-        description="Download the related database and give it as a context to the LLM to adapt the analysis",
+        description="Clone the client repository without asking: the analysis is made in the client's code, "
+        "which is otherwise offered and can be declined",
         default=False,
     )
     llm = args.String(
@@ -39,5 +40,11 @@ class Analyze:
     client = args.String(
         aliases=["--client"],
         description="Name of the client. Read from the database or the task, or asked for, when omitted",
+        default="",
+    )
+    comment = args.String(
+        aliases=["--comment"],
+        description="Instructions for this run, read before anything else: they take precedence over the "
+        "task description and the method wherever they disagree",
         default="",
     )

@@ -16,6 +16,7 @@ from odev.plugins.odev_plugin_ai.common.mixins import AICommandMixin
 from odev.plugins.odev_plugin_ai_scaffold.common.analysis import Analysis, AnalysisFactory
 from odev.plugins.odev_plugin_ai_scaffold.common.analyze import Analyze
 from odev.plugins.odev_plugin_ai_scaffold.common.prompt_factory import PromptFactory
+from odev.plugins.odev_plugin_ai_scaffold.common.prompts.base import METHOD_SKILL, SAAS_SKILL
 from odev.plugins.odev_plugin_ai_scaffold.common.repository import ClientRepositoryMixin
 
 
@@ -50,9 +51,12 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
     analysis_factory: type[AnalysisFactory] = AnalysisFactory
     """Where analyses are read from. A plugin with another source swaps this out."""
 
+    # Imported from the prompt rather than spelled out again: the prompt tells the
+    # agent to work by these skills, and the two halves have to name the same ones.
+    required_skills = [*AICommandMixin.required_skills, METHOD_SKILL]
+
     process: OdoobinProcess | None = None
     initiate_excalidraw: bool = True
-    download_codebase: bool = False
     _database_hints: dict[str, Any] | None = None
 
     @property
@@ -64,7 +68,14 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
         if args.no_excalidraw:
             self.initiate_excalidraw = False
 
-        self.download_codebase = args.context
+        # -c is not what makes the client code be looked for - that happens on every
+        # run - but the answer to the question the lookup would otherwise ask.
+        self.assume_repository_clone = args.context
+
+        # An analysis is about one task, so give it a playground of its own: the
+        # diagrams and images written for it are named after their place in that task's
+        # description, and two tasks sharing a directory overwrite each other's.
+        self.sandbox_scope = str(args.task_id)
 
         super().__init__(args, **kwargs)
 
@@ -87,6 +98,7 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
         )
 
         source_path = self._resolve_odoo_source(version)
+        self._resolve_skills(platform)
 
         compiled_request = PromptFactory.build_analysis_prompt(
             analysis,
@@ -98,6 +110,7 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
             loc_per_hour_xml=self.config.ai_scaffold.loc_per_hour_xml,
             loc_per_hour_js=self.config.ai_scaffold.loc_per_hour_js,
             minimum_dev_hours=self.config.ai_scaffold.minimum_dev_hours,
+            comment=self.args.comment or None,
             odev=self.odev,
         )
 
@@ -110,6 +123,22 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
             # has no business editing the standard source it is measured against.
             extra_ro_bind_dirs=[str(source_path)] if source_path else None,
         )
+
+    def _resolve_skills(self, platform: str | None) -> None:
+        """Add the skills this run leans on to the ones the command always needs.
+
+        Bound on the instance and never on the class: what a run needs depends on its
+        hosting, and appending to the class list would carry the answer over to the
+        next analysis of the session.
+        """
+        skills = list(self.required_skills)
+
+        if platform == "saas":
+            # What is deployable there is a data-only module, which the method skill
+            # sends the agent here to read the real shape and limits of.
+            skills.append(SAAS_SKILL)
+
+        self.required_skills = skills
 
     def _load_analysis(self) -> Analysis | None:
         """Return the analysis of the task, from wherever this odev knows to look.
@@ -290,7 +319,7 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
         return analysis.client_name
 
     def _resolve_codebase(self, analysis: Analysis) -> None:
-        """Point the sandbox at the client code the task concerns, under ``--context``.
+        """Point the sandbox at the client code the task concerns.
 
         Which code that is cannot be worked out here: it takes the databases of the
         task's subscription, read through Ps-Tools, and a hosted database willing to
@@ -298,10 +327,14 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
         of them overrides this to set :attr:`sandbox_repository`. Without it the
         analysis is made from the task and the standard source alone, which is what the
         version and the hosting are asked for.
-        """
-        if not self.download_codebase:
-            return
 
+        Tried on every run rather than behind a flag: an analysis of a task about a
+        client that has custom code is an analysis of that code, and a developer who
+        had to remember a flag to get it read the standard source instead. Nothing is
+        cloned without asking - see :meth:`_confirm_repository_clone` - so a run that
+        wants none of it costs one answer.
+        """
+        self._set_support_reason(self.args.task_id, "analysis")
         self.sandbox_repository = self._resolve_client_repository(analysis)
 
         if self.sandbox_repository is None:
@@ -313,6 +346,9 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
         The images of the description and the exported diagrams are written here
         because it is bound into the sandbox: anywhere else and the agent is told
         about files it cannot open.
+
+        Which directory that is depends on where the run works: a playground of the
+        task's own, or the checkout when one was resolved - see :attr:`sandbox_scope`.
         """
         sandbox_dirs = self._get_sandbox_dirs(self.database_name)
         return Path(sandbox_dirs[0]) if sandbox_dirs else None
