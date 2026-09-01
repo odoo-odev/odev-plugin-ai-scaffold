@@ -1,15 +1,9 @@
-"""Export the Excalidraw diagrams a task links to, as SVGs the agent can read.
+"""Export the Excalidraw diagrams a task links to, as PNGs the agent can open.
 
 A diagram is a live document: there is no url that hands back a picture, so the only
 way to get one is to open the board in a browser and drive its own export. That is what
 Playwright is here for, and it is the slowest thing in a run - a browser launch, a wait
 for the scene to settle, then the export dialog - hence the spinner.
-
-SVG rather than PNG, because the agent reads a diagram far better that way: the export
-keeps every label of the board as text and every box as a shape with coordinates, so the
-model reads the names of the models and the arrows between them instead of inferring
-them from pixels. It is the same dialog and the same cost, and an SVG stays legible at
-any zoom for the human who opens the artifact afterwards.
 
 Nothing here writes to stdout. The browser is chatty by nature and every step of it is
 a debug detail: on a normal run the user sees a spinner, and with ``--log-level debug``
@@ -19,9 +13,7 @@ they see why the export took as long as it did, or where it gave up.
 from __future__ import annotations
 
 import re
-import unicodedata
 from contextlib import contextmanager
-from html import unescape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -34,17 +26,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-EXCALIDRAW_URL = re.compile(
-    r"https://(?:app\.|link\.|plus\.)?excalidraw\.com/[A-Za-z0-9/_\-#=?&]+(?:,[A-Za-z0-9_\-]+)?"
-)
+EXCALIDRAW_URL = re.compile(r"https://app\.excalidraw\.com/[A-Za-z0-9/_\-#=]+(?:,[A-Za-z0-9_\-]+)?")
 """Matches an Excalidraw board linked from a task description.
-
-Every host Excalidraw hands a board out on, because which one a link carries says
-nothing about the board: ``excalidraw.com/#json=<id>,<key>`` is what the app itself
-shares and what the Odoo editor stores for a Draw block, ``link.excalidraw.com/l/...``
-is the shortened form of that same share, ``plus.excalidraw.com`` an Excalidraw+ board,
-and ``app.`` an alias of the first. A link that is not the plain share redirects to one,
-which the browser follows on its own - so all of them are worth opening.
 
 The trailing group is the encryption key of a collaboration link, whose fragment reads
 ``#room=<id>,<key>``. Without it the board cannot be decrypted and the export opens an
@@ -52,21 +35,8 @@ empty canvas, so the comma is taken only when a key actually follows it - never 
 comma that merely ends a sentence the url happens to sit in.
 """
 
-DIAGRAM_FILENAME = "excalidraw-{index}-{name}.svg"
-"""What an exported diagram is called on disk.
-
-Numbered in the order the description links it, then named after the board itself -
-Excalidraw suggests the title it was saved under, which is the only thing that tells
-four diagrams of the same task apart. The prompt names the files it hands the agent, so
-a board called "Dev flows" is a diagram the agent can refer to by name rather than by
-the position it happened to hold in the description.
-"""
-
-FALLBACK_NAME = "diagram"
-"""Stands in for the board's name when Excalidraw suggests none worth keeping."""
-
-NAME_MAX_LENGTH = 60
-"""How much of a board's name to keep, in characters, so a path stays a path."""
+DIAGRAM_FILENAME = "excalidraw-diagram-{index}.png"
+"""What an exported diagram is called, numbered in the order the description links it."""
 
 JOIN_TIMEOUT = 5000
 """How long to wait for the "Join room" dialog a shared board opens with, in ms."""
@@ -77,36 +47,21 @@ NETWORK_TIMEOUT = 15000
 REPAINT_DELAY = 500
 """How long to let the canvas repaint once its images have landed, in ms."""
 
-NO_FILE_PICKER = "delete window.showSaveFilePicker; delete window.showOpenFilePicker;"
-"""Hide the File System Access API from the page, so a save becomes a download.
-
-Excalidraw saves through ``showSaveFilePicker`` wherever the browser has it - Chrome
-does - and a headless one has no picker to show, so the call aborts and the export ends
-in nothing at all: no file, no error on the page, just a download event that never
-fires. Taking the api away leaves Excalidraw on its other branch, the anchor download
-every browser without the api gets, which is the one Playwright can intercept.
-"""
-
 
 def find_diagram_urls(description: str | None) -> list[str]:
     """Return every Excalidraw board linked from ``description``, in order, once each.
 
     A task may link several - one per flow, or a board per iteration of the same one -
     and taking only the first quietly loses the rest.
-
-    Read from the html rather than from the text it becomes: a board pasted in the Odoo
-    editor may still be a ``data-embedded="draw"`` block holding its url in a json
-    attribute, which the html-to-text pass drops entirely. Entities are resolved first,
-    so a query string written ``&amp;`` in the markup is followed as the ``&`` it is.
     """
     if not description:
         return []
 
-    return list(dict.fromkeys(EXCALIDRAW_URL.findall(unescape(description))))
+    return list(dict.fromkeys(EXCALIDRAW_URL.findall(description)))
 
 
 def export_diagrams(urls: list[str], directory: Path, odev=None) -> list[Path]:
-    """Export each board of ``urls`` to an SVG in ``directory``, and return the paths.
+    """Export each board of ``urls`` to a PNG in ``directory``, and return the paths.
 
     One browser for all of them: launching it is most of the cost, and a task linking
     four diagrams should not pay it four times. A board that cannot be exported is
@@ -127,15 +82,14 @@ def export_diagrams(urls: list[str], directory: Path, odev=None) -> list[Path]:
                 label = f"Exporting Excalidraw diagram {index}/{len(urls)}"
 
                 with progress.spinner(label):
-                    exported = _export_one(browser, url)
+                    png = _export_one(browser, url)
 
-                if exported is None:
+                if png is None:
                     logger.warning(f"Could not export the Excalidraw diagram at {url}.")
                     continue
 
-                suggested, svg = exported
-                path = directory / DIAGRAM_FILENAME.format(index=index, name=_slugify(suggested))
-                path.write_bytes(svg)
+                path = directory / DIAGRAM_FILENAME.format(index=index)
+                path.write_bytes(png)
                 paths.append(path)
                 logger.debug(f"Exported {url} to {path}")
     except Exception as e:  # noqa: BLE001 - a missing diagram must not cost us the run
@@ -145,16 +99,6 @@ def export_diagrams(urls: list[str], directory: Path, odev=None) -> list[Path]:
         logger.info(f"Exported {len(paths)} Excalidraw diagram(s).")
 
     return paths
-
-
-def _slugify(filename: str) -> str:
-    """Return the name Excalidraw saved a board under, as a name of our own.
-
-    Accents are folded rather than dropped, so a board named in French keeps the word
-    it was named with instead of the holes its accents leave behind.
-    """
-    stem = unicodedata.normalize("NFKD", Path(filename).stem).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-")[:NAME_MAX_LENGTH].strip("-") or FALLBACK_NAME
 
 
 @contextmanager
@@ -221,13 +165,9 @@ def _odev_chrome(odev=None) -> str | None:
     return str(executable) if executable else None
 
 
-def _export_one(browser: Any, url: str) -> tuple[str, bytes] | None:
-    """Open ``url`` and drive Excalidraw's own SVG export.
-
-    Returns the name Excalidraw saves the board under, and the image bytes.
-    """
+def _export_one(browser: Any, url: str) -> bytes | None:
+    """Open ``url`` and drive Excalidraw's own PNG export, returning the image bytes."""
     page = browser.new_page()
-    page.add_init_script(NO_FILE_PICKER)
 
     try:
         logger.debug(f"Loading {url}")
@@ -248,7 +188,7 @@ def _export_one(browser: Any, url: str) -> tuple[str, bytes] | None:
 
         # The images of a scene are fetched asynchronously after the canvas becomes
         # visible: exporting right away bakes their "broken image" placeholder into the
-        # export instead of the picture. Wait for the network to settle rather than
+        # PNG instead of the picture. Wait for the network to settle rather than
         # guessing a delay; the short wait after is for the canvas to repaint once the
         # data lands, which is neither a network nor a DOM event to wait on.
         try:
@@ -262,9 +202,9 @@ def _export_one(browser: Any, url: str) -> tuple[str, bytes] | None:
         page.keyboard.press("Control+Shift+E")
 
         with page.expect_download() as download:
-            page.locator('[aria-label="Export to SVG"]').click()
+            page.locator('[aria-label="Export to PNG"]').click()
 
-        return download.value.suggested_filename, Path(download.value.path()).read_bytes()
+        return Path(download.value.path()).read_bytes()
     except Exception as e:  # noqa: BLE001 - reported by the caller, per diagram
         logger.debug(f"Export of {url} failed: {e}", exc_info=True)
         return None

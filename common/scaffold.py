@@ -29,7 +29,6 @@ class Scaffold(AICommandMixin, ClientRepositoryMixin):
     if TYPE_CHECKING:
         args: Namespace
         config: Any
-        console: Any
 
         def error(self, message: str, *args: Any, **kwargs: Any) -> CommandError: ...
 
@@ -78,12 +77,6 @@ class Scaffold(AICommandMixin, ClientRepositoryMixin):
         description="Do not export the Excalidraw diagrams the task links to",
         default=False,
     )
-    comment = args.String(
-        aliases=["--comment"],
-        description="Instructions for this run, read before anything else: they take precedence over the "
-        "task and its analysis wherever they disagree",
-        default="",
-    )
     task_id = args.String(description="Id of the task to scaffold from", nargs="?")
 
     analysis_factory: type[AnalysisFactory] = AnalysisFactory
@@ -116,60 +109,23 @@ class Scaffold(AICommandMixin, ClientRepositoryMixin):
         if self.args.path.resolve() != Path.cwd().resolve():
             return
 
-        self._set_support_reason(self.args.task_id, "scaffolding")
         self.scaffold_database_name = self.args.database
         self.sandbox_repository = self._resolve_client_repository(self.analysis_obj)
 
-    def _named_module(self, working_dir: Path) -> str | None:
-        """Return the module the working directory *is*, or None when it holds modules.
+    def _default_module_name(self, working_dir: Path) -> str:
+        """Return the name of the scaffolded module when nothing else names it.
 
-        A manifest is what makes the difference, and the only reliable sign: a directory
-        with one in it is a module, and the dev goes in it. A repository, an addons
-        directory or the playground holds modules rather than being one - its name is
-        not a module name, and being dash-separated, could not be one - so the name it
-        happens to have says nothing about where the code goes. ``quickstart`` passes
-        exactly such a path, the addons directory of the database it just set up.
-
-        None is an answer, not a failure: which module a dev belongs in is a decision
-        made from the modules already in the repository, and it is the agent standing in
-        front of them that can make it. See ``ScaffoldCommand._placement_prompt``.
+        The working directory names it when it was made for one module, which is what
+        an explicit ``--path`` is. A client repository holds many, so its name names
+        none of them - and is not a valid module name to begin with, repositories being
+        dash-separated. The task is then what identifies the module.
         """
-        return working_dir.name if (working_dir / "__manifest__.py").is_file() else None
+        if self.sandbox_repository is not None and self.args.task_id:
+            module_name = f"task_{self.args.task_id}"
+            logger.info(f"No module name given: scaffolding into {module_name!r}.")
+            return module_name
 
-    def _resolve_version(self) -> OdooVersion:
-        """Return the Odoo version to scaffold for, asking for it when nothing knows it.
-
-        Every part of the run needs it: the manifest version of the module, the branch
-        of the standard source it is written against, the server it is test-installed
-        on. So it is asked for rather than defaulted - a module scaffolded against a
-        guessed version is a module written for a framework the client does not run.
-
-        Taken from ``-V``, then from the task. Both can parse to an empty version -
-        ``OdooVersion("0")``, which is what a task whose subscription names no database
-        resolves to, and which is falsy and printed as "0.0" - so the *value* is tested
-        rather than whether one was given.
-        """
-        for candidate in (self.args.version, self.analysis_obj.version if self.analysis_obj else None):
-            if not candidate:
-                continue
-
-            try:
-                if version := OdooVersion(str(candidate)):
-                    return version
-            except Exception as e:  # noqa: BLE001 - anything unreadable is a version we do not have
-                logger.warning(f"Ignoring the unreadable Odoo version {candidate!r}: {e}")
-
-            logger.warning(f"The Odoo version {str(candidate)!r} says nothing about which version to build for.")
-
-        answer = self.console.text("Odoo version to scaffold for (e.g. 19.0):")
-
-        try:
-            if version := OdooVersion(answer):
-                return version
-        except Exception as e:
-            raise self.error(f"Could not read {answer!r} as an Odoo version: {e}") from e
-
-        raise self.error("No Odoo version to scaffold for: pass one with -V, e.g. `-V 19.0`.")
+        return working_dir.name
 
     def _load_analysis(self) -> None:
         """Load the analysis of the task, unless one was handed over already.
@@ -194,7 +150,7 @@ class Scaffold(AICommandMixin, ClientRepositoryMixin):
         self.depends_list = self.args.depends or list(self.analysis_obj.depends)
         self.is_importable = self.args.format == "xml" or self.analysis_obj.importable_module
         self.override_name = self.args.module or self.analysis_obj.existing_module_name
-        self.target_version = self._resolve_version()
+        self.target_version = OdooVersion(self.args.version) if self.args.version else self.analysis_obj.version
 
         if self.override_name:
             self.depends_list.append(self.override_name)
