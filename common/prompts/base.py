@@ -184,8 +184,7 @@ class BasePrompt:
 
     def _get_main_prompt(self) -> list[str]:
         points = [
-            "You are analyzing an Odoo task: say what has to be built for the requirements above, and "
-            "what it costs.",
+            "You are analyzing an Odoo task: say what has to be built for the requirements above, and what it costs.",
             f"Load the `{METHOD_SKILL}` skill and work by it. It holds the method, the same on every run; "
             "this prompt holds only the facts of this one.",
         ]
