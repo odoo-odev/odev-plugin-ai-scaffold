@@ -270,7 +270,7 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
                 if version := OdooVersion(str(candidate)):
                     return version
             except Exception as e:  # noqa: BLE001
-                logger.warning(f"Ignoring the unparseable Odoo version {candidate!r}: {e}")
+                logger.warning(f"Ignoring the unparsable Odoo version {candidate!r}: {e}")
 
         answer = self.console.text("Odoo version to analyze for (e.g. 17.0):")
 
