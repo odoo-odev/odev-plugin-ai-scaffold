@@ -5,6 +5,12 @@ way to get one is to open the board in a browser and drive its own export. That 
 Playwright is here for, and it is the slowest thing in a run - a browser launch, a wait
 for the scene to settle, then the export dialog - hence the spinner.
 
+Two kinds of board, because a link decides which editor opens. A share link opens the
+editor itself, which has the export dialog. An Excalidraw+ read-only link opens a viewer
+that has no menu at all - only a zoom - so there is no dialog to drive: that page ships
+the whole scene in its own html, and the fix is to read it from there and hand it to
+excalidraw.com, which does have the dialog. See :func:`_readonly_scene`.
+
 SVG rather than PNG, because the agent reads a diagram far better that way: the export
 keeps every label of the board as text and every box as a shape with coordinates, so the
 model reads the names of the models and the arrows between them instead of inferring
@@ -18,6 +24,7 @@ they see why the export took as long as it did, or where it gave up.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from contextlib import contextmanager
@@ -85,6 +92,33 @@ does - and a headless one has no picker to show, so the call aborts and the expo
 in nothing at all: no file, no error on the page, just a download event that never
 fires. Taking the api away leaves Excalidraw on its other branch, the anchor download
 every browser without the api gets, which is the one Playwright can intercept.
+"""
+
+EDITOR_URL = "https://excalidraw.com"
+"""Where a scene we hold ourselves is exported, having no board of its own to open."""
+
+FLIGHT_CHUNK = re.compile(r'self\.__next_f\.push\(\[\d+,\s*("(?:[^"\\]|\\.)*")')
+"""One chunk of the payload the read-only viewer, a Next.js app, renders itself from.
+
+Read out of the html of the page rather than out of the array those calls fill, because
+React has drained that array by the time the board is on screen. The chunks live on in
+the script tags that pushed them, each a javascript string literal - which is json, so
+``json.loads`` is what gives back the text one holds.
+"""
+
+SCENE_CONTENTS = '"sceneContents":'
+"""Where, in that payload, the scene of the board itself starts.
+
+The value is an ``.excalidraw`` document, the very thing the editor's own "Save to file"
+writes: type, version, appState and every element. Which is why the export can go
+through the editor unchanged - it is handed a scene it recognises as one of its own.
+"""
+
+SCENE_METADATA = '"sceneMetadata":'
+"""Where, in that payload, what Excalidraw+ knows *about* the board starts.
+
+Only for its ``name``: a read-only export has no filename to be suggested from, so
+without it every diagram of a task would land as ``excalidraw-<n>-diagram.svg``.
 """
 
 
@@ -222,51 +256,162 @@ def _odev_chrome(odev=None) -> str | None:
 
 
 def _export_one(browser: Any, url: str) -> tuple[str, bytes] | None:
-    """Open ``url`` and drive Excalidraw's own SVG export.
+    """Open ``url`` and export the board it holds, whichever kind of page it is.
 
-    Returns the name Excalidraw saves the board under, and the image bytes.
+    Returns the name the board is saved under, and the image bytes.
     """
-    page = browser.new_page()
-    page.add_init_script(NO_FILE_PICKER)
+    page = _new_page(browser)
 
     try:
         logger.debug(f"Loading {url}")
         page.goto(url)
 
-        # A shared board opens on a "Join room" dialog, and the canvas stays behind it.
-        try:
-            join = page.get_by_role("button", name=re.compile("Join", re.IGNORECASE))
-            join.wait_for(state="visible", timeout=JOIN_TIMEOUT)
-            join.click()
-            logger.debug("Joined the room")
-            page.wait_for_timeout(2000)
-        except Exception:  # noqa: BLE001 - most boards open without one
-            logger.debug("No 'Join' dialog, proceeding")
+        scene = _readonly_scene(page)
+
+        if scene is not None:
+            logger.debug("Read-only board: exporting its scene through the editor")
+            return _export_scene(browser, scene)
+
+        _join_room(page)
 
         logger.debug("Waiting for the drawing")
         page.locator("canvas").first.wait_for(state="visible")
+        _settle(page)
 
-        # The images of a scene are fetched asynchronously after the canvas becomes
-        # visible: exporting right away bakes their "broken image" placeholder into the
-        # export instead of the picture. Wait for the network to settle rather than
-        # guessing a delay; the short wait after is for the canvas to repaint once the
-        # data lands, which is neither a network nor a DOM event to wait on.
-        try:
-            page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
-        except Exception:  # noqa: BLE001
-            logger.debug("Network did not settle in time, exporting anyway")
-
-        page.wait_for_timeout(REPAINT_DELAY)
-
-        logger.debug("Opening the export dialog")
-        page.keyboard.press("Control+Shift+E")
-
-        with page.expect_download() as download:
-            page.locator('[aria-label="Export to SVG"]').click()
-
-        return download.value.suggested_filename, Path(download.value.path()).read_bytes()
+        return _download_svg(page)
     except Exception as e:  # noqa: BLE001 - reported by the caller, per diagram
         logger.debug(f"Export of {url} failed: {e}", exc_info=True)
         return None
     finally:
         page.close()
+
+
+def _new_page(browser: Any, scene: dict[str, Any] | None = None) -> Any:
+    """Open a page with the file picker hidden, and ``scene`` waiting for the editor.
+
+    A scene is planted in local storage rather than opened as a file, because that is
+    where the editor looks first: it restores the board it was last left on, before it
+    has drawn anything, so the canvas comes up on our scene and no dialog is involved.
+    Written in an init script so it is there before the editor's own scripts run.
+    """
+    page = browser.new_page()
+    page.add_init_script(NO_FILE_PICKER)
+
+    if scene is not None:
+        elements = json.dumps(json.dumps(scene.get("elements", [])))
+        app_state = json.dumps(json.dumps(scene.get("appState", {})))
+        page.add_init_script(
+            # Guarded: local storage throws on the about:blank a page starts its life on.
+            f"try {{ localStorage.setItem('excalidraw', {elements});"
+            f" localStorage.setItem('excalidraw-state', {app_state}); }} catch (e) {{}}"
+        )
+
+    return page
+
+
+def _readonly_scene(page: Any) -> dict[str, Any] | None:
+    """Return the scene an Excalidraw+ read-only viewer ships in its own page, if any.
+
+    None for every other kind of board - the editor is on the page, and driving its
+    dialog is both cheaper and truer to what the board looks like.
+
+    The images of a scene do not come along: the viewer holds them encrypted and fetches
+    the key on its own terms, so they export as the empty frames they are here. Every
+    label, shape and arrow does, which is what the agent reads a diagram for.
+    """
+    try:
+        payload = "".join(json.loads(chunk) for chunk in FLIGHT_CHUNK.findall(page.content()))
+    except Exception as e:  # noqa: BLE001 - not a viewer page, then
+        logger.debug(f"Could not read the payload of the page: {e}")
+        return None
+
+    scene = _json_at(payload, SCENE_CONTENTS)
+
+    if not isinstance(scene, dict) or "elements" not in scene:
+        return None
+
+    metadata = _json_at(payload, SCENE_METADATA)
+    name = metadata.get("name") if isinstance(metadata, dict) else None
+
+    if name:
+        # What the editor suggests as a filename, and so what the diagram is named after.
+        scene.setdefault("appState", {})["name"] = name
+
+    logger.debug(f"Read {len(scene['elements'])} elements of read-only board {name or '(unnamed)'}")
+
+    return scene
+
+
+def _json_at(payload: str | None, marker: str) -> Any:
+    """Return the json object that follows ``marker`` in ``payload``, or None.
+
+    The payload is a stream of react output rather than a document: the objects that
+    interest us sit somewhere inside it, and only a decoder that stops of its own accord
+    at the end of a value can pick one out of it.
+    """
+    if not payload or marker not in payload:
+        return None
+
+    try:
+        return json.JSONDecoder().raw_decode(payload, payload.index(marker) + len(marker))[0]
+    except ValueError as e:
+        logger.debug(f"Could not read {marker} out of the page: {e}")
+        return None
+
+
+def _export_scene(browser: Any, scene: dict[str, Any]) -> tuple[str, bytes] | None:
+    """Export a scene we hold ourselves, by handing it to the editor on excalidraw.com."""
+    page = _new_page(browser, scene=scene)
+
+    try:
+        logger.debug(f"Loading the editor at {EDITOR_URL}")
+        page.goto(EDITOR_URL)
+        page.locator("canvas").first.wait_for(state="visible")
+        _settle(page)
+
+        return _download_svg(page)
+    finally:
+        page.close()
+
+
+def _join_room(page: Any) -> None:
+    """Get past the "Join room" dialog a shared board opens on, if there is one.
+
+    The canvas stays behind it, and an export driven over it exports nothing.
+    """
+    try:
+        join = page.get_by_role("button", name=re.compile("Join", re.IGNORECASE))
+        join.wait_for(state="visible", timeout=JOIN_TIMEOUT)
+        join.click()
+        logger.debug("Joined the room")
+        page.wait_for_timeout(2000)
+    except Exception:  # noqa: BLE001 - most boards open without one
+        logger.debug("No 'Join' dialog, proceeding")
+
+
+def _settle(page: Any) -> None:
+    """Wait for the scene to finish arriving on the canvas.
+
+    The images of a scene are fetched asynchronously after the canvas becomes visible:
+    exporting right away bakes their "broken image" placeholder into the export instead
+    of the picture. Wait for the network to settle rather than guessing a delay; the
+    short wait after is for the canvas to repaint once the data lands, which is neither
+    a network nor a DOM event to wait on.
+    """
+    try:
+        page.wait_for_load_state("networkidle", timeout=NETWORK_TIMEOUT)
+    except Exception:  # noqa: BLE001
+        logger.debug("Network did not settle in time, exporting anyway")
+
+    page.wait_for_timeout(REPAINT_DELAY)
+
+
+def _download_svg(page: Any) -> tuple[str, bytes]:
+    """Drive the editor's own SVG export, and return the name it saves under and bytes."""
+    logger.debug("Opening the export dialog")
+    page.keyboard.press("Control+Shift+E")
+
+    with page.expect_download() as download:
+        page.locator('[aria-label="Export to SVG"]').click()
+
+    return download.value.suggested_filename, Path(download.value.path()).read_bytes()

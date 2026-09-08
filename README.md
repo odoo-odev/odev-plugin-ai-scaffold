@@ -44,9 +44,11 @@ not separable without losing something:
 - **the description**, as text
 - **the images embedded in it**, exported as files the agent can open, and referred to
   from the description by that same file name so it knows which picture goes where
-- **the Excalidraw diagrams it links to**, all of them, exported to PNG through a real
+- **the Excalidraw diagrams it links to**, all of them, exported to SVG through a real
   browser - there is no url that hands back a picture, so the board is opened and its
-  own export driven, in the same Chrome odev uses for tours
+  own export driven, in the same Chrome odev uses for tours. An Excalidraw+ read-only
+  link opens a viewer with no export of its own: its scene is read off the page and
+  handed to the editor, which loses the images of the board but keeps every label
 - **the standard Odoo source** of the target version, mounted read-only, so the agent can
   tell what Odoo already does from what has to be built - only the second is estimated
 - **the client's database**, optionally (`--context`), cloned and given as context
