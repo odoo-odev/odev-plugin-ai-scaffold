@@ -110,6 +110,7 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
             loc_per_hour_xml=self.config.ai_scaffold.loc_per_hour_xml,
             loc_per_hour_js=self.config.ai_scaffold.loc_per_hour_js,
             minimum_dev_hours=self.config.ai_scaffold.minimum_dev_hours,
+            saas_logic_hours=self.config.ai_scaffold.saas_logic_hours,
             comment=self.args.comment or None,
             odev=self.odev,
         )

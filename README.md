@@ -67,7 +67,16 @@ loc_per_hour_python = 20
 loc_per_hour_xml = 50
 loc_per_hour_js = 20
 minimum_dev_hours = 4
+saas_logic_hours = 10
 ```
+
+On Odoo Online, `saas_logic_hours` caps what the analysis may propose as logic - server
+actions, automation rules, sandboxed computes, the model and field records standing in
+for a class - so the database stays simple enough to keep maintaining from the interface.
+Views, QWeb, SCSS and JavaScript do not count against it: those would be written the same
+way on Odoo.sh. Over the cap, or where the requirements only fit through workarounds, the
+agent stops and asks whether the development should move to Odoo.sh before writing the
+rest of the analysis.
 
 ## Extending it
 
