@@ -66,6 +66,7 @@ class BasePrompt:
         self.loc_per_hour_xml: float = 50
         self.loc_per_hour_js: float = 20
         self.minimum_dev_hours: float = 4
+        self.saas_logic_hours: float = 10
 
     def build_prompt(  # noqa: PLR0913 - the estimation throughputs all come from odev.cfg
         self,
@@ -77,6 +78,7 @@ class BasePrompt:
         loc_per_hour_xml: float | None = None,
         loc_per_hour_js: float | None = None,
         minimum_dev_hours: float | None = None,
+        saas_logic_hours: float | None = None,
         comment: str | None = None,
     ) -> str:
         """Construct the full prompt sent to the sandboxed AI agent.
@@ -98,6 +100,10 @@ class BasePrompt:
             loc_per_hour_xml: Same as above, for XML.
             loc_per_hour_js: Same as above, for JavaScript.
             minimum_dev_hours: Floor put on the total estimated development time.
+            saas_logic_hours: Hours of logic an Odoo Online analysis may propose before
+                it has to ask whether the development should move to Odoo.sh. Only
+                stated on that hosting, where the point of the database is that it
+                stays simple; ignored everywhere else.
             comment: What the developer running the command asked for on the command
                 line, which outranks the rest of the prompt. Nothing is said about it
                 when omitted.
@@ -118,6 +124,8 @@ class BasePrompt:
             self.loc_per_hour_js = loc_per_hour_js
         if minimum_dev_hours is not None:
             self.minimum_dev_hours = minimum_dev_hours
+        if saas_logic_hours is not None:
+            self.saas_logic_hours = saas_logic_hours
 
         # The comment comes first, and is the frame the rest is read in: that is what
         # "takes precedence" has to mean when everything is one prompt.
@@ -176,6 +184,16 @@ class BasePrompt:
                 f"Hosting: {PLATFORM_LABELS.get(self.platform, self.platform)}. What it allows is the "
                 f"section under that name in the `{METHOD_SKILL}` skill; read it before proposing an "
                 "implementation."
+            )
+        # Stated with the hosting rather than with the other configured numbers: the
+        # reporting section is what a plugin delivering analyses elsewhere replaces,
+        # and this budget decides whether there is an analysis to deliver at all.
+        if self.platform == "saas":
+            points.append(
+                f"Logic budget for this hosting: {self.saas_logic_hours:g} hours. What counts against it, "
+                "and the question to put to the developer before writing any more of the analysis when the "
+                "requirements do not fit inside it or need workarounds, is that same section of the "
+                f"`{METHOD_SKILL}` skill."
             )
         if analysis.description:
             points.append(f"Task description:\n{analysis.description}")
