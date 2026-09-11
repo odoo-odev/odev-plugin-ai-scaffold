@@ -1,1 +1,2 @@
+html2text>=2024.2.26
 playwright>=1.44.0

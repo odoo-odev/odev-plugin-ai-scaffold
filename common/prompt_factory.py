@@ -80,6 +80,8 @@ class PromptFactory:
         loc_per_hour_xml: float | None = None,
         loc_per_hour_js: float | None = None,
         minimum_dev_hours: float | None = None,
+        saas_logic_hours: float | None = None,
+        comment: str | None = None,
         odev=None,
     ) -> str:
         """Build the agent prompt for a given task analysis."""
@@ -92,4 +94,6 @@ class PromptFactory:
             loc_per_hour_xml,
             loc_per_hour_js,
             minimum_dev_hours,
+            saas_logic_hours,
+            comment,
         )

@@ -44,9 +44,11 @@ not separable without losing something:
 - **the description**, as text
 - **the images embedded in it**, exported as files the agent can open, and referred to
   from the description by that same file name so it knows which picture goes where
-- **the Excalidraw diagrams it links to**, all of them, exported to PNG through a real
+- **the Excalidraw diagrams it links to**, all of them, exported to SVG through a real
   browser - there is no url that hands back a picture, so the board is opened and its
-  own export driven, in the same Chrome odev uses for tours
+  own export driven, in the same Chrome odev uses for tours. An Excalidraw+ read-only
+  link opens a viewer with no export of its own: its scene is read off the page and
+  handed to the editor, which loses the images of the board but keeps every label
 - **the standard Odoo source** of the target version, mounted read-only, so the agent can
   tell what Odoo already does from what has to be built - only the second is estimated
 - **the client's database**, optionally (`--context`), cloned and given as context
@@ -65,7 +67,16 @@ loc_per_hour_python = 20
 loc_per_hour_xml = 50
 loc_per_hour_js = 20
 minimum_dev_hours = 4
+saas_logic_hours = 10
 ```
+
+On Odoo Online, `saas_logic_hours` caps what the analysis may propose as logic - server
+actions, automation rules, sandboxed computes, the model and field records standing in
+for a class - so the database stays simple enough to keep maintaining from the interface.
+Views, QWeb, SCSS and JavaScript do not count against it: those would be written the same
+way on Odoo.sh. Over the cap, or where the requirements only fit through workarounds, the
+agent stops and asks whether the development should move to Odoo.sh before writing the
+rest of the analysis.
 
 ## Extending it
 

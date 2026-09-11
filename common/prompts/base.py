@@ -19,25 +19,32 @@ from odev.plugins.odev_plugin_ai_scaffold.common.analysis import Analysis
 
 logger = logging.getLogger(__name__)
 
-PLATFORM_RULES = {
-    "saas": (
-        "Odoo Online (SaaS): no custom module and no custom code are deployable, "
-        "so everything has to be achieved with Studio, automation rules and "
-        "server actions. Say so explicitly for any requirement that cannot be."
-    ),
-    "sh": (
-        "Odoo.sh: a custom module is deployable, and the estimation has to account "
-        "for the branch, the build and the deployment of that module. Account for "
-        "that once - its own line, or a caveat in the analysis - never folded into "
-        "the description or estimate of an unrelated one: a post_init_hook stays "
-        "scoped to what its code does, not to how the module reaches the client."
-    ),
-    "op": (
-        "On-Premise: a custom module is deployable, but nothing about the hosting, "
-        "the deployment or the third-party modules already installed can be assumed."
-    ),
+METHOD_SKILL = "odoo_task_analysis"
+"""Skill carrying the method an analysis is made by.
+
+The prompt states the facts of a run: the task and its description, the client, the
+target version, the hosting, where the diagrams and the standard source were mounted,
+the throughputs to estimate with and where the finished analysis goes. Everything that
+is the same from one run to the next - what to read before concluding, what each
+hosting allows, how an estimate is grounded, what the analysis has to contain - lives
+in that skill instead, and the command installs it before the agent starts: see
+``AnalyzeCommand.required_skills``.
+"""
+
+SAAS_SKILL = "odoo_saas_development"
+"""Skill carrying what a data-only module can express, which is what SaaS deploys."""
+
+PLATFORM_LABELS = {
+    "saas": "Odoo Online (SaaS)",
+    "sh": "Odoo.sh",
+    "op": "On-Premise",
 }
-"""What each hosting allows, keyed by the platform of the client's database."""
+"""Hosting of the client database, keyed by the platform of that database.
+
+Only named here. What each hosting allows is method, stated once in the "What the
+hosting allows" section of the ``odoo_task_analysis`` skill, so the prompt says which
+one applies rather than repeating the rules of all three on every run.
+"""
 
 
 class BasePrompt:
@@ -52,12 +59,14 @@ class BasePrompt:
         self.odev = odev
         self.platform: str | None = None
         self.source_path: Path | None = None
+        self.comment: str | None = None
         # Overridable defaults: the command passes the user's odev.cfg values through
         # build_prompt, these only cover direct use of the class (e.g. tests).
         self.loc_per_hour_python: float = 20
         self.loc_per_hour_xml: float = 50
         self.loc_per_hour_js: float = 20
         self.minimum_dev_hours: float = 4
+        self.saas_logic_hours: float = 10
 
     def build_prompt(  # noqa: PLR0913 - the estimation throughputs all come from odev.cfg
         self,
@@ -69,6 +78,8 @@ class BasePrompt:
         loc_per_hour_xml: float | None = None,
         loc_per_hour_js: float | None = None,
         minimum_dev_hours: float | None = None,
+        saas_logic_hours: float | None = None,
+        comment: str | None = None,
     ) -> str:
         """Construct the full prompt sent to the sandboxed AI agent.
 
@@ -89,6 +100,13 @@ class BasePrompt:
             loc_per_hour_xml: Same as above, for XML.
             loc_per_hour_js: Same as above, for JavaScript.
             minimum_dev_hours: Floor put on the total estimated development time.
+            saas_logic_hours: Hours of logic an Odoo Online analysis may propose before
+                it has to ask whether the development should move to Odoo.sh. Only
+                stated on that hosting, where the point of the database is that it
+                stays simple; ignored everywhere else.
+            comment: What the developer running the command asked for on the command
+                line, which outranks the rest of the prompt. Nothing is said about it
+                when omitted.
 
         Returns:
             str: The prompt to hand over to the agent CLI.
@@ -96,6 +114,7 @@ class BasePrompt:
         self.analysis_obj = analysis_obj
         self.platform = platform
         self.source_path = source_path
+        self.comment = comment
 
         if loc_per_hour_python is not None:
             self.loc_per_hour_python = loc_per_hour_python
@@ -105,8 +124,13 @@ class BasePrompt:
             self.loc_per_hour_js = loc_per_hour_js
         if minimum_dev_hours is not None:
             self.minimum_dev_hours = minimum_dev_hours
+        if saas_logic_hours is not None:
+            self.saas_logic_hours = saas_logic_hours
 
+        # The comment comes first, and is the frame the rest is read in: that is what
+        # "takes precedence" has to mean when everything is one prompt.
         sections: dict[str, list[str]] = {
+            "priority instructions": self._get_comment_prompt(),
             "task": self._get_task_prompt(),
             "instructions": self._get_main_prompt(),
             "screenshots": self._get_embedded_images_prompt(artifacts_dir),
@@ -126,6 +150,25 @@ class BasePrompt:
 
         return "\n".join(content)
 
+    def _get_comment_prompt(self) -> list[str]:
+        """Return what the developer asked for on the command line, if anything.
+
+        The task is what a client wrote and the method is what is always true on every
+        run; the comment is what the person running this analysis knows on top of both -
+        a requirement to leave out, a direction already agreed with the client, a part
+        already built. It is stated first and as outranking the rest, so a conflict with
+        the task description resolves the way the developer meant it to.
+        """
+        if not self.comment:
+            return []
+
+        return [
+            "The developer running this analysis gave the instructions below. They take precedence over "
+            "everything that follows - the task description, the method skill and the rest of this "
+            "prompt - wherever they disagree, and the rest still applies where they are silent.",
+            f"Instructions:\n{self.comment}",
+        ]
+
     def _get_task_prompt(self) -> list[str]:
         analysis = self.analysis_obj
         points = [f"Task id: {analysis.task_id}"]
@@ -137,7 +180,21 @@ class BasePrompt:
         if self.version:
             points.append(f"Target Odoo version: {self.version}")
         if self.platform:
-            points.append(f"Hosting: {PLATFORM_RULES.get(self.platform, self.platform)}")
+            points.append(
+                f"Hosting: {PLATFORM_LABELS.get(self.platform, self.platform)}. What it allows is the "
+                f"section under that name in the `{METHOD_SKILL}` skill; read it before proposing an "
+                "implementation."
+            )
+        # Stated with the hosting rather than with the other configured numbers: the
+        # reporting section is what a plugin delivering analyses elsewhere replaces,
+        # and this budget decides whether there is an analysis to deliver at all.
+        if self.platform == "saas":
+            points.append(
+                f"Logic budget for this hosting: {self.saas_logic_hours:g} hours. What counts against it, "
+                "and the question to put to the developer before writing any more of the analysis when the "
+                "requirements do not fit inside it or need workarounds, is that same section of the "
+                f"`{METHOD_SKILL}` skill."
+            )
         if analysis.description:
             points.append(f"Task description:\n{analysis.description}")
 
@@ -145,17 +202,15 @@ class BasePrompt:
 
     def _get_main_prompt(self) -> list[str]:
         points = [
-            "You are tasked with analyzing the provided data, requirements, and diagrams "
-            "to perform a comprehensive Odoo development analysis.",
-            "Read the relevant source code available in your working directory before drawing conclusions.",
-            "Identify the impacted Odoo models, views, and modules, and flag any missing requirement.",
+            "You are analyzing an Odoo task: say what has to be built for the requirements above, and what it costs.",
+            f"Load the `{METHOD_SKILL}` skill and work by it. It holds the method, the same on every run; "
+            "this prompt holds only the facts of this one.",
         ]
 
         if self.source_path:
             points.append(
-                f"The standard Odoo {self.version or ''} source is mounted read-only at {self.source_path} "
-                "(odoo/, enterprise/ and design-themes/). Read it to tell what Odoo already does from what "
-                "has to be built: only the second is estimated. Do not attempt to modify it."
+                f"The standard Odoo {self.version or ''} source is mounted read-only at {self.source_path}, "
+                "as odoo/, enterprise/ and design-themes/."
             )
 
         return points
@@ -194,32 +249,27 @@ class BasePrompt:
 
         return [
             f"{len(diagram_paths)} Excalidraw architecture diagram(s) were exported for you to: "
-            f"{', '.join(f'`{path}`' for path in diagram_paths)}. Read those images.",
+            f"{', '.join(f'`{path}`' for path in diagram_paths)}. Read those files: they are SVG, "
+            "so every label of the board is text you can read straight out of the markup.",
             "Carefully analyze the components, relationships, and text within them.",
             "Ensure the proposed Odoo models and views match the technical structure they show.",
         ]
 
     def _get_reporting_prompt(self) -> list[str]:
-        """Instructions on what to do with the finished analysis.
+        """Where the analysis goes, and what this run estimates with.
 
         Written out in the conversation, for the developer to read and argue with: an
         analysis is a proposal, and this is where it is discussed before it is worth
         recording anywhere. A plugin that has somewhere to deliver it to overrides this.
+
+        What an analysis has to contain is the ``odoo_task_analysis`` skill's, not this
+        prompt's; what is here is the delivery target and the numbers odev.cfg
+        configured this run with.
         """
         return [
-            "Write the analysis as markdown, in your response, structured per functional requirement.",
-            "For each requirement, state the impacted models and fields, the proposed implementation, "
-            "and an estimate in hours.",
-            "Ground each estimate in the lines of code the requirement takes to write, not a round "
-            f"guess: count the lines, divide by a throughput of {self.loc_per_hour_python:g} Python "
-            f"lines/hour, {self.loc_per_hour_xml:g} XML lines/hour or {self.loc_per_hour_js:g} JavaScript "
-            "lines/hour - whichever the code is written in - and round to the nearest quarter hour.",
-            f"The total development time should not fall below {self.minimum_dev_hours:g} hours: even a "
-            "small requirement carries setup, testing and review overhead that per-line estimates alone "
-            "tend to undercut. Raise the smallest item rather than inflate every one.",
-            "Say once, up front, whether this is built as a new custom module or as a change to one that "
-            "already exists - read the source at hand rather than guessing. A new module is the default; "
-            "name an existing one only when extending it genuinely makes more sense.",
-            "State the assumptions you had to make and the requirements you left out of the estimation. "
-            "Keep that to a few sentences: it is read next to the analysis, not instead of it.",
+            f"Write the analysis as markdown, in your response, in the shape the `{METHOD_SKILL}` skill "
+            "asks for: there is nowhere to deliver it to in this run.",
+            f"Estimate with the throughputs this run is configured for: {self.loc_per_hour_python:g} Python "
+            f"lines/hour, {self.loc_per_hour_xml:g} XML lines/hour, {self.loc_per_hour_js:g} JavaScript "
+            f"lines/hour, and a total that does not fall below {self.minimum_dev_hours:g} hours.",
         ]
