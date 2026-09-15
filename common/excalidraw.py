@@ -17,15 +17,20 @@ model reads the names of the models and the arrows between them instead of infer
 them from pixels. It is the same dialog and the same cost, and an SVG stays legible at
 any zoom for the human who opens the artifact afterwards.
 
-Nothing here writes to stdout. The browser is chatty by nature and every step of it is
-a debug detail: on a normal run the user sees a spinner, and with ``--log-level debug``
-they see why the export took as long as it did, or where it gave up.
+Nothing here writes to stdout but the one question it has to ask. The browser is chatty
+by nature and every step of it is a debug detail: on a normal run the user sees a
+spinner, and with ``--log-level debug`` they see why the export took as long as it did,
+or where it gave up. The exception is a board that will not open for a browser signed in
+to nothing - a private Excalidraw+ one - which is asked for by hand while the developer
+is still at the terminal. See :func:`_ask_for_exports`.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
+import time
 import unicodedata
 from contextlib import contextmanager
 from html import unescape
@@ -33,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from odev.common import progress
+from odev.common.console import console
 from odev.common.logging import logging
 
 
@@ -59,7 +65,7 @@ empty canvas, so the comma is taken only when a key actually follows it - never 
 comma that merely ends a sentence the url happens to sit in.
 """
 
-DIAGRAM_FILENAME = "excalidraw-{index}-{name}.svg"
+DIAGRAM_FILENAME = "excalidraw-{index}-{name}{suffix}"
 """What an exported diagram is called on disk.
 
 Numbered in the order the description links it, then named after the board itself -
@@ -67,6 +73,9 @@ Excalidraw suggests the title it was saved under, which is the only thing that t
 four diagrams of the same task apart. The prompt names the files it hands the agent, so
 a board called "Dev flows" is a diagram the agent can refer to by name rather than by
 the position it happened to hold in the description.
+
+The suffix is the exporter's: SVG for a board exported here, and whatever the developer
+handed over for one they exported themselves.
 """
 
 FALLBACK_NAME = "diagram"
@@ -83,6 +92,25 @@ NETWORK_TIMEOUT = 15000
 
 REPAINT_DELAY = 500
 """How long to let the canvas repaint once its images have landed, in ms."""
+
+CANVAS_TIMEOUT = 30000
+"""How long to wait for a board to draw itself, in ms."""
+
+POLL_DELAY = 250
+"""How often to look at a page waiting to settle on one outcome or the other, in ms."""
+
+INACCESSIBLE = re.compile(r"could ?n.t open this scene", re.IGNORECASE)
+"""What the Excalidraw+ viewer puts on the page in place of a board it may not show.
+
+Worth recognising rather than waiting out. That page is a client-side app: it fetches
+the scene from Excalidraw's own backend, which answers 404 for a board that is not
+public unless the request carries a session - and the browser started here is a fresh
+profile that has none. The canvas then never appears, so without this the export sits
+out its whole timeout only to end up no better informed than when it started.
+"""
+
+PRIVATE_BOARD = "the board is private and this browser is signed in to nothing, so it only opens for you"
+"""Why such a board did not open, in the words the developer is asked to act on."""
 
 NO_FILE_PICKER = "delete window.showSaveFilePicker; delete window.showOpenFilePicker;"
 """Hide the File System Access API from the page, so a save becomes a download.
@@ -122,6 +150,17 @@ without it every diagram of a task would land as ``excalidraw-<n>-diagram.svg``.
 """
 
 
+class ExportError(Exception):
+    """Why a board could not be exported, in words worth putting in front of a person.
+
+    Only raised for the failures that have an answer. A private board is one the
+    developer at the terminal exports by hand in a couple of seconds, and saying so is
+    worth more than the generic warning every other failure gets - a timeout out of
+    Playwright names an element that did not appear, which tells them nothing they can
+    act on.
+    """
+
+
 def find_diagram_urls(description: str | None) -> list[str]:
     """Return every Excalidraw board linked from ``description``, in order, once each.
 
@@ -145,7 +184,8 @@ def export_diagrams(urls: list[str], directory: Path, odev=None) -> list[Path]:
     One browser for all of them: launching it is most of the cost, and a task linking
     four diagrams should not pay it four times. A board that cannot be exported is
     skipped with a warning rather than failing the run - an analysis without its diagram
-    is worth more than no analysis.
+    is worth more than no analysis - but not before the developer has been offered the
+    chance to hand it over themselves, which :func:`_ask_for_exports` is for.
 
     :param odev: The odev instance, to reuse the Chrome it provisions. Falls back on
         Playwright's own bundled Chromium when not given, or when odev has none.
@@ -153,32 +193,108 @@ def export_diagrams(urls: list[str], directory: Path, odev=None) -> list[Path]:
     if not urls:
         return []
 
-    paths: list[Path] = []
+    # Every board starts out unexported and leaves this list once it is on disk, so a
+    # browser that never starts at all leaves them all to be asked for, the same way a
+    # browser that started and could not open one does.
+    missing: list[tuple[int, str]] = list(enumerate(urls, start=1))
+    exported: dict[int, Path] = {}
 
     try:
         with _browser(odev) as browser:
-            for index, url in enumerate(urls, start=1):
+            for index, url in list(missing):
                 label = f"Exporting Excalidraw diagram {index}/{len(urls)}"
 
-                with progress.spinner(label):
-                    exported = _export_one(browser, url)
+                try:
+                    with progress.spinner(label):
+                        diagram = _export_one(browser, url)
+                except ExportError as e:
+                    logger.warning(f"Could not export the Excalidraw diagram at {url}: {e}.")
+                    continue
 
-                if exported is None:
+                if diagram is None:
                     logger.warning(f"Could not export the Excalidraw diagram at {url}.")
                     continue
 
-                suggested, svg = exported
-                path = directory / DIAGRAM_FILENAME.format(index=index, name=_slugify(suggested))
+                suggested, svg = diagram
+                path = directory / DIAGRAM_FILENAME.format(index=index, name=_slugify(suggested), suffix=".svg")
                 path.write_bytes(svg)
-                paths.append(path)
+                exported[index] = path
+                missing.remove((index, url))
                 logger.debug(f"Exported {url} to {path}")
     except Exception as e:  # noqa: BLE001 - a missing diagram must not cost us the run
         logger.warning(f"Could not start a browser to export the Excalidraw diagrams: {e}")
 
-    if paths:
-        logger.info(f"Exported {len(paths)} Excalidraw diagram(s).")
+    # Asked only once the browser and Playwright are both gone: InquirerPy drives its
+    # prompts with asyncio.run(), which throws while Playwright's own loop is running.
+    exported.update(_ask_for_exports(missing, directory))
 
-    return paths
+    if exported:
+        logger.info(f"{len(exported)} Excalidraw diagram(s) ready for the agent.")
+
+    return [exported[index] for index in sorted(exported)]
+
+
+def _ask_for_exports(missing: list[tuple[int, str]], directory: Path) -> dict[int, Path]:
+    """Ask for the boards that did not export, as files the developer exports by hand.
+
+    Some failures no retry gets past. A private Excalidraw+ board opens for the people
+    it was shared with and for nobody else, and the browser started here is a fresh
+    profile signed in to nothing - while the developer who ran the command is signed in,
+    and getting the picture out costs them one Ctrl+Shift+E.
+
+    Asked here rather than reported afterwards because here the agent has not launched
+    yet: the diagram is usually where the architecture of the task actually is, and an
+    analysis written around the hole it leaves is the one thing the run was not for.
+    Skipped when prompts are bypassed (``--headless``), there being nobody to ask.
+    """
+    if not missing or console.bypass_prompt:
+        return {}
+
+    logger.info(
+        "A board that did not export can still be handed over: open it, export it with Ctrl+Shift+E as SVG, "
+        "and give the path to the file when asked."
+    )
+
+    given: dict[int, Path] = {}
+
+    for index, url in missing:
+        if not console.confirm(f"Export {url} yourself and hand the file over?", default=True):
+            continue
+
+        source = _ask_for_file()
+
+        if source is None:
+            continue
+
+        path = directory / DIAGRAM_FILENAME.format(
+            index=index, name=_slugify(source.name), suffix=source.suffix.lower()
+        )
+        shutil.copyfile(source, path)
+        given[index] = path
+        logger.info(f"Took {source} as diagram {index}.")
+
+    return given
+
+
+def _ask_for_file() -> Path | None:
+    """Ask for the file a board was exported to, until it names one. None to go on without.
+
+    Asked again rather than given up on when the answer names nothing: the path is typed
+    by hand from wherever the browser dropped the file, and a typo in it is not a change
+    of mind about handing the diagram over.
+    """
+    while True:
+        answer = console.filepath("Path to the exported diagram (empty to skip)")
+
+        if not answer:
+            return None
+
+        source = Path(answer).expanduser()
+
+        if source.is_file():
+            return source
+
+        logger.warning(f"{source} is not a file.")
 
 
 def _slugify(filename: str) -> str:
@@ -259,6 +375,9 @@ def _export_one(browser: Any, url: str) -> tuple[str, bytes] | None:
     """Open ``url`` and export the board it holds, whichever kind of page it is.
 
     Returns the name the board is saved under, and the image bytes.
+
+    :raises ExportError: when the page says why it will not open, so the caller can put
+        that in front of the developer instead of only that something failed.
     """
     page = _new_page(browser)
 
@@ -275,10 +394,12 @@ def _export_one(browser: Any, url: str) -> tuple[str, bytes] | None:
         _join_room(page)
 
         logger.debug("Waiting for the drawing")
-        page.locator("canvas").first.wait_for(state="visible")
+        _wait_for_canvas(page)
         _settle(page)
 
         return _download_svg(page)
+    except ExportError:
+        raise
     except Exception as e:  # noqa: BLE001 - reported by the caller, per diagram
         logger.debug(f"Export of {url} failed: {e}", exc_info=True)
         return None
@@ -387,6 +508,30 @@ def _join_room(page: Any) -> None:
         page.wait_for_timeout(2000)
     except Exception:  # noqa: BLE001 - most boards open without one
         logger.debug("No 'Join' dialog, proceeding")
+
+
+def _wait_for_canvas(page: Any) -> None:
+    """Wait until the board is on screen, or until the page admits it will not be.
+
+    Both outcomes are the app's own and both arrive asynchronously, but only one of them
+    is an element Playwright knows how to wait on - hence the poll. Waiting on the canvas
+    alone turns a board that says plainly it cannot be opened into a timeout that says
+    nothing, thirty seconds later.
+    """
+    canvas = page.locator("canvas").first
+    refused = page.get_by_text(INACCESSIBLE).first
+    deadline = time.monotonic() + CANVAS_TIMEOUT / 1000
+
+    while time.monotonic() < deadline:
+        if canvas.count() and canvas.is_visible():
+            return
+
+        if refused.count():
+            raise ExportError(PRIVATE_BOARD)
+
+        page.wait_for_timeout(POLL_DELAY)
+
+    raise ExportError("the board did not draw itself in time")
 
 
 def _settle(page: Any) -> None:
