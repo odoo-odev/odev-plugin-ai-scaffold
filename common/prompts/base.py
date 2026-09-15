@@ -247,13 +247,20 @@ class BasePrompt:
         if not diagram_paths:
             return []
 
-        return [
+        points = [
             f"{len(diagram_paths)} Excalidraw architecture diagram(s) were exported for you to: "
-            f"{', '.join(f'`{path}`' for path in diagram_paths)}. Read those files: they are SVG, "
-            "so every label of the board is text you can read straight out of the markup.",
+            f"{', '.join(f'`{path}`' for path in diagram_paths)}. Read those files.",
             "Carefully analyze the components, relationships, and text within them.",
             "Ensure the proposed Odoo models and views match the technical structure they show.",
         ]
+
+        # Not said of all of them, because a board this run could not open is handed
+        # over by the developer in whatever format they exported it to, which may be a
+        # picture to look at rather than markup to read.
+        if any(path.suffix == ".svg" for path in diagram_paths):
+            points.insert(1, "The SVG ones keep every label of the board as text, readable straight out of the markup.")
+
+        return points
 
     def _get_reporting_prompt(self) -> list[str]:
         """Where the analysis goes, and what this run estimates with.

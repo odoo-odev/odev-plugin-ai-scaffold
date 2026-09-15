@@ -48,7 +48,11 @@ not separable without losing something:
   browser - there is no url that hands back a picture, so the board is opened and its
   own export driven, in the same Chrome odev uses for tours. An Excalidraw+ read-only
   link opens a viewer with no export of its own: its scene is read off the page and
-  handed to the editor, which loses the images of the board but keeps every label
+  handed to the editor, which loses the images of the board but keeps every label.
+  A board that will not open for that browser - a private Excalidraw+ one, which needs
+  a session it has none of - is asked for by hand before the agent launches: export it
+  with `Ctrl+Shift+E` and give the path to the file. With `--headless` there is nobody
+  to ask, so the run goes on without it
 - **the standard Odoo source** of the target version, mounted read-only, so the agent can
   tell what Odoo already does from what has to be built - only the second is estimated
 - **the client's database**, optionally (`--context`), cloned and given as context
