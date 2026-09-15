@@ -87,3 +87,19 @@ class AiScaffoldSection(Section):
     @minimum_dev_hours.setter
     def minimum_dev_hours(self, value: float):
         self.set("minimum_dev_hours", str(value))
+
+    @property
+    def saas_logic_hours(self) -> float:
+        """Hours of logic an Odoo Online analysis may propose before asking to move to Odoo.sh.
+
+        A database on that hosting is worth keeping simple, so what is expressed as
+        records - server actions, automation rules, sandboxed computes, the model and
+        field records standing in for a class - is budgeted, while views, QWeb, SCSS
+        and JavaScript are not: those would be written the same way anywhere.
+        Defaults to 10.
+        """
+        return float(self.get("saas_logic_hours", "10"))
+
+    @saas_logic_hours.setter
+    def saas_logic_hours(self, value: float):
+        self.set("saas_logic_hours", str(value))
