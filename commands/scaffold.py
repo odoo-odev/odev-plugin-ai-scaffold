@@ -13,6 +13,7 @@ from odev.common.mixins.databases.list import ListLocalDatabasesMixin
 from odev.plugins.odev_plugin_ai.common.mixins import GUIDELINES_SKILL
 from odev.plugins.odev_plugin_ai_scaffold.common.prompts.base import SAAS_SKILL
 from odev.plugins.odev_plugin_ai_scaffold.common.scaffold import Scaffold
+from odev.plugins.odev_plugin_ai_scaffold.common.task import task_id_of
 
 
 logger = logging.getLogger(__name__)
@@ -37,13 +38,22 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
         return False
 
     def __init__(self, args: Namespace, **kwargs):
-        if args.database and not args.task_id and args.database not in self.list_databases():
+        # A task given alone lands in the database argument, that being the first
+        # positional - but only something that reads as a task is taken for one, or a
+        # database whose name odev does not know yet would be looked up on the tracker.
+        if (
+            args.database
+            and not args.task_id
+            and task_id_of(args.database)
+            and args.database not in self.list_databases()
+        ):
             args.task_id = args.database
             args.database = None
 
         self.analysis_obj = kwargs.pop("analysis_obj", None)
 
         super().__init__(args, **kwargs)
+        self._resolve_task_id()
 
     def run(self) -> None:
         """Execute the scaffold command."""

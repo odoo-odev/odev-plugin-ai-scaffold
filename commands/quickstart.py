@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from odev.commands.database.quickstart import QuickStartCommand
@@ -12,6 +11,7 @@ from odev.common.mixins import ListLocalDatabasesMixin
 from odev.common.odoobin import OdoobinProcess
 
 from odev.plugins.odev_plugin_ai_scaffold.common.scaffold import Scaffold
+from odev.plugins.odev_plugin_ai_scaffold.common.task import task_id_of
 from odev.plugins.odev_plugin_project.commands.pre_commit import COPIER_ANSWERS_FILE
 
 
@@ -36,11 +36,15 @@ class QuickStartScaffoldCommand(ListLocalDatabasesMixin, QuickStartCommand, Scaf
         if (
             args.database
             and not args.task_id
-            and re.match(r"^#?\d+$", args.database)
+            and task_id_of(args.database)
             and args.database not in self.list_databases()
         ):
             args.task_id = args.database
             args.database = None
+
+        # Checked before the task is read rather than after: what follows goes looking
+        # for the analysis, and a task that is not one has no business reaching Ps-Tools.
+        self._resolve_task_id(args)
 
         # Read before anything else: which database to quickstart is what the task
         # says, so the analysis has to be in hand before the command is set up.

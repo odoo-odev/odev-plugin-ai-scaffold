@@ -2,8 +2,10 @@
 
 from odev.common import args
 
+from odev.plugins.odev_plugin_ai_scaffold.common.task import TaskArgument
 
-class Analyze:
+
+class Analyze(TaskArgument):
     """Command line arguments shared by ``odev analyze`` and what extends it."""
 
     task_id = args.String(description="Id of the task to analyze")

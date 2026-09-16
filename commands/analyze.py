@@ -65,6 +65,9 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
         return False
 
     def __init__(self, args: Namespace, **kwargs):
+        # Before anything reads it, the sandbox directory named after it included.
+        self._resolve_task_id(args)
+
         if args.no_excalidraw:
             self.initiate_excalidraw = False
 
