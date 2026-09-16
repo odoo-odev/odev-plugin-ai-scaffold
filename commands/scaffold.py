@@ -32,6 +32,14 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
     _database_arg_required = False
     exclusive_arguments = [("database", "task_id", "prompt")]
 
+    succeeded: bool = False
+    """Whether the agent came back having scaffolded the module.
+
+    Recorded rather than only logged: a command extending this one reports the run
+    somewhere - see the Ps-Tools plugin, which marks the analysis of the task - and a
+    run that failed or was interrupted is not one to report.
+    """
+
     @property
     def _database_exists_required(self) -> bool:
         return False
@@ -79,14 +87,14 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
 
         logger.info(f"Delegating scaffolding to {self.args.cli}...")
 
-        success = agent.run(
+        self.succeeded = agent.run(
             prompt_str,
             sandbox_dirs,
             database=database,
             version=str(self.target_version),
         )
 
-        if not success:
+        if not self.succeeded:
             logger.error("Scaffolding failed or was interrupted.")
 
     def _build_prompt(self, version_available: dict[str, bool], artifacts_dir: Path, source_branch: str) -> str:
