@@ -14,12 +14,16 @@ two, and reading them here saves asking for what the tracker already knows.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from odev.common import progress
 from odev.common.databases import RemoteDatabase
 from odev.common.logging import logging
+
+
+if TYPE_CHECKING:
+    from odev.common.commands.base import Namespace
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +60,67 @@ MIMETYPE_EXTENSIONS = {
     "image/jpeg": ".jpg",
     "image/svg+xml": ".svg",
 }
+
+
+TASK_ID = re.compile(r"^#?(\d+)$")
+"""A task as it is written by hand: its number, with or without the # in front."""
+
+TASK_URL = re.compile(r"^https?://(?:www\.)?odoo\.com/\S*?(\d+)/?$")
+"""A task as it is copied out of the browser, whichever of odoo.com's views it was open in.
+
+Narrowed to odoo.com and to a trailing number on purpose: a database URL is an odoo.com
+URL too, and one that names no task - `https://acme.odoo.com` has no number to take, and
+is left to fail as the database it is rather than looked up as a task.
+"""
+
+
+def task_id_of(value: str | None) -> str | None:
+    """Return the task ``value`` names, or None when it names no task.
+
+    The commands take a task as a bare positional argument, next to a database that is
+    also one: what tells the two apart is what a task id can look like, which is this
+    and nothing else.
+    """
+    if not value:
+        return None
+
+    match = TASK_ID.match(value.strip()) or TASK_URL.match(value.strip())
+    return match.group(1) if match else None
+
+
+class TaskArgument:
+    """The task argument of a command, settled before anything goes looking for it.
+
+    An unreadable task id used to travel all the way to the tracker, which answered with
+    whatever its own parsing made of it: a database URL passed as a task reached Ps-Tools
+    and came back as "invalid literal for int()", reported as an instance that could not
+    be reached. The argument is checked where it is read instead.
+    """
+
+    if TYPE_CHECKING:
+        args: Namespace
+
+        def error(self, message: str, *args: Any, **kwargs: Any) -> Exception: ...
+
+    def _resolve_task_id(self, args: Namespace | None = None) -> None:
+        """Rewrite the task argument as the task id it names, or refuse it.
+
+        Takes the namespace it works on: ``quickstart`` reads the task before the command
+        is set up, so there is no ``self.args`` to check by then.
+        """
+        args = self.args if args is None else args
+        task_id = task_id_of(args.task_id)
+
+        if not args.task_id:
+            return
+
+        if task_id is None:
+            raise self.error(
+                f"{args.task_id!r} is not a task: pass the number of an odoo.com task, or its URL. "
+                "A database goes in the database argument, or in --path for a directory."
+            )
+
+        args.task_id = task_id
 
 
 def _extension(mimetype: str) -> str:

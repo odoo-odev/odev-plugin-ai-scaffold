@@ -12,10 +12,10 @@ from odev.common.version import OdooVersion
 from odev.plugins.odev_plugin_ai.common.mixins import AICommandMixin
 from odev.plugins.odev_plugin_ai_scaffold.common.analysis import Analysis, AnalysisFactory
 from odev.plugins.odev_plugin_ai_scaffold.common.repository import ClientRepositoryMixin
+from odev.plugins.odev_plugin_ai_scaffold.common.task import TaskArgument
 
 
 logger = logging.getLogger(__name__)
-
 
 if TYPE_CHECKING:
     from argparse import Namespace
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from odev.common.errors import CommandError
 
 
-class Scaffold(AICommandMixin, ClientRepositoryMixin):
+class Scaffold(AICommandMixin, ClientRepositoryMixin, TaskArgument):
     """Command line arguments of the scaffolding commands, and the analysis behind them."""
 
     if TYPE_CHECKING:
