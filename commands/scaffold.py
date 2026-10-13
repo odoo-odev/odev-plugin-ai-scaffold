@@ -102,6 +102,7 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
 
         prompt_str = "You are an expert Odoo Developer. Your task is to scaffold a module.\n"
         prompt_str += self._comment_prompt()
+        prompt_str += self._task_reference_prompt()
         prompt_str += f"\nHere is the task to implement:\n{analysis.description}\n"
         prompt_str += (
             "\nWhere the task carries a technical analysis, that is what to build from; "
@@ -211,6 +212,24 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
             )
 
         return prompt_str
+
+    def _task_reference_prompt(self) -> str:
+        """Return the id and url of the task, which the description does not carry.
+
+        The branch name, the commit tag and the pull request all reference the task by
+        its id. Left out, the agent stops at the first commit to ask for a number the
+        command was given on its own command line.
+        """
+        task_id = self.analysis_obj.task_id if self.analysis_obj else self.args.task_id
+
+        if not task_id:
+            return ""
+
+        task_url = f"{self.config.ai_scaffold.task_url.rstrip('/')}/odoo/my-tasks/{task_id}"
+        return (
+            f"\nTask id: {task_id} ({task_url}). Use it wherever the task is referenced - branch name, "
+            "commit tag, pull request - rather than asking for it.\n"
+        )
 
     def _comment_prompt(self) -> str:
         """Return what the developer asked for on the command line, if anything.
