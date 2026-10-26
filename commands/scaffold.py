@@ -60,6 +60,10 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
         version_available = self._prepare_odoo_environment([source_branch])
 
         self._resolve_skills()
+        # Scaffolding always runs in plan mode: it writes a whole module from a task, and the
+        # developer approves the approach before any file lands. Forced rather than defaulted on
+        # the --plan flag so there is no way to accidentally turn it off for a scaffold.
+        self.args.plan = True
         agent = self.get_ai_agent()
         # Installed here and not by run_ai_agent: this command drives the agent itself,
         # to hand it the version the module is written for, and used to start it with
