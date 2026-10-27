@@ -136,6 +136,24 @@ class Scaffold(AICommandMixin, ClientRepositoryMixin):
         """
         return working_dir.name if (working_dir / "__manifest__.py").is_file() else None
 
+    def _resolve_is_importable(self) -> bool:
+        """Return whether to scaffold an importable (data-only) module rather than code.
+
+        An importable module is what SaaS takes - no Python - so this is the hosting
+        question seen from the scaffold: ``--format`` settles it when given, then the
+        checkout the developer is standing in (a folder of data-only modules scaffolds
+        another, one with custom code scaffolds code), and only then the task, whose
+        Ps-Tools subscription can name the wrong hosting.
+        """
+        if self.args.format:
+            return self.args.format == "xml"
+
+        platform = self._platform_from_cwd()
+        if platform:
+            return platform == "saas"
+
+        return self.analysis_obj.importable_module
+
     def _resolve_version(self) -> OdooVersion:
         """Return the Odoo version to scaffold for, asking for it when nothing knows it.
 
@@ -144,12 +162,19 @@ class Scaffold(AICommandMixin, ClientRepositoryMixin):
         on. So it is asked for rather than defaulted - a module scaffolded against a
         guessed version is a module written for a framework the client does not run.
 
-        Taken from ``-V``, then from the task. Both can parse to an empty version -
-        ``OdooVersion("0")``, which is what a task whose subscription names no database
-        resolves to, and which is falsy and printed as "0.0" - so the *value* is tested
-        rather than whether one was given.
+        Taken from ``-V``, then from the checkout the developer is standing in, then from
+        the task. The folder outranks the task: a developer working in a client's checkout
+        builds for the version it is on, which the task's subscription in Ps-Tools can name
+        wrongly. All can parse to an empty version - ``OdooVersion("0")``, which is what a
+        task whose subscription names no database resolves to, and which is falsy and
+        printed as "0.0" - so the *value* is tested rather than whether one was given.
         """
-        for candidate in (self.args.version, self.analysis_obj.version if self.analysis_obj else None):
+        candidates = (
+            self.args.version,
+            self._version_from_cwd(),
+            self.analysis_obj.version if self.analysis_obj else None,
+        )
+        for candidate in candidates:
             if not candidate:
                 continue
 
@@ -192,7 +217,7 @@ class Scaffold(AICommandMixin, ClientRepositoryMixin):
             self.analysis_obj = analysis_obj
 
         self.depends_list = self.args.depends or list(self.analysis_obj.depends)
-        self.is_importable = self.args.format == "xml" or self.analysis_obj.importable_module
+        self.is_importable = self._resolve_is_importable()
         self.override_name = self.args.module or self.analysis_obj.existing_module_name
         self.target_version = self._resolve_version()
 

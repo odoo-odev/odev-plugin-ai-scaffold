@@ -253,11 +253,15 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
         An estimation depends on the version the client runs: what a requirement
         costs, and whether it is a customization at all, is not the same across
         versions. Take it from the command line, then from the database analyzed
-        against, then from the task, and ask for it when none of them knows it.
+        against, then from the checkout the developer is standing in, then from the
+        task, and ask for it when none of them knows it. The folder outranks the task:
+        a developer working in a client's checkout analyzes for the version it is on,
+        which the task's subscription in Ps-Tools can name wrongly.
         """
         candidates = [
             self.args.odoo_version,
             self._get_database_hints().get("version"),
+            self._version_from_cwd(),
             analysis.odoo_version,
         ]
 
@@ -289,11 +293,19 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
         so an analysis made without it is an analysis made against the wrong rules.
 
         Read off --hosting rather than --platform, which DatabaseCommand owns for
-        something else entirely: where odev looks the analyzed database up.
+        something else entirely: where odev looks the analyzed database up. Taken from
+        --hosting, then from the analyzed database, then from the checkout the developer
+        is standing in, then from the task; the folder outranks the task, whose Ps-Tools
+        subscription can name the wrong one.
         """
         platforms = dict(PLATFORM_CHOICES)
 
-        for candidate in (self.args.hosting, self._get_database_hints().get("platform"), analysis.platform):
+        for candidate in (
+            self.args.hosting,
+            self._get_database_hints().get("platform"),
+            self._platform_from_cwd(),
+            analysis.platform,
+        ):
             if not candidate:
                 continue
             if candidate in platforms:

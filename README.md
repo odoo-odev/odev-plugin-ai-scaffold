@@ -11,6 +11,21 @@ of the version the client runs - differing in what the agent is asked to produce
 | `odev scaffold <task>` | Reads the same task and writes the module: manifest, models, views, security, then installs it to check that it works. |
 | `odev quickstart <task>` | Sets up the database the task points at, then scaffolds into it. |
 
+## Installation
+
+Install [odev](https://github.com/odoo-odev/odev/tree/main?tab=readme-ov-file#installation) if not already done. You'll
+need odev version 4.0.0 or above.
+
+Enable this plugin by running:
+
+```bash
+odev plugin --enable odoo-odev/odev-plugin-ai-scaffold
+```
+
+It depends on [`odev-plugin-ai`](https://github.com/odoo-odev/odev-plugin-ai) and
+[`odev-plugin-project`](https://github.com/odoo-odev/odev-plugin-project), both enabled automatically. See the
+`odev-plugin-ai` prerequisites for the host tools the agent needs.
+
 ## Setup
 
 The task is read over RPC from a single Odoo instance, named in `odev.cfg`:
@@ -81,6 +96,44 @@ Views, QWeb, SCSS and JavaScript do not count against it: those would be written
 way on Odoo.sh. Over the cap, or where the requirements only fit through workarounds, the
 agent stops and asks whether the development should move to Odoo.sh before writing the
 rest of the analysis.
+
+## Options
+
+The task id is the one positional argument. What the commands need beyond it - the Odoo version, the hosting, the
+client - is read off the database and the task first, and asked for only when neither knows; the options below are for
+overriding that, or for saying up front what a headless run cannot be asked.
+
+Shared by `analyze`, `scaffold` and `quickstart`:
+
+| Option | For |
+| --- | --- |
+| `-e`, `--no-excalidraw` | Skip exporting the Excalidraw diagrams the task links to. |
+| `--comment <text>` | Instructions for this run, read before anything else; they take precedence over the task wherever they disagree. |
+
+`analyze` only:
+
+| Option | For |
+| --- | --- |
+| `-c`, `--context` | Clone the client repository without asking, so the analysis is made against the client's own code. |
+| `--odoo-version <v>` | The Odoo version to analyse for, e.g. `17.0`. |
+| `--hosting <h>` | The client's hosting: `saas`, `sh` or `op`. |
+| `--client <name>` | The client name. |
+| `--llm <name>` | The LLM to use. |
+
+`scaffold` and `quickstart`:
+
+| Option | For |
+| --- | --- |
+| `--format <xml\|py>` | Output as an importable (XML) module or a Python module. |
+| `-m`, `--module <name>` | Override / scaffold into an existing module of that name. |
+| `-D`, `--demo` | Also generate demo data files (CSV/XML). |
+| `-t`, `--tests` | Generate standard Odoo unit tests from the task requirements. |
+| `-M` | Do not migrate the manual / Studio fields into Python fields. |
+| `--depends <a,b,c>` | Comma-separated modules whose files are given as context. |
+| `--path <path>`, `-V`/`--version <v>` | The export template's path and target version. |
+
+The [common AI options](https://github.com/odoo-odev/odev-plugin-ai#common-options) from `odev-plugin-ai`
+(`--cli`, `--model`, `-y`/`--yolo`, `-H`/`--headless`, `--resume`, …) apply here too.
 
 ## Extending it
 
