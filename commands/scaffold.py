@@ -11,6 +11,7 @@ from odev.common.logging import logging
 from odev.common.mixins.databases.list import ListLocalDatabasesMixin
 
 from odev.plugins.odev_plugin_ai.common.mixins import GUIDELINES_SKILL
+from odev.plugins.odev_plugin_ai.common.skills import ensure_skills
 from odev.plugins.odev_plugin_ai_scaffold.common.prompts.base import SAAS_SKILL
 from odev.plugins.odev_plugin_ai_scaffold.common.scaffold import Scaffold
 
@@ -63,8 +64,10 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
         agent = self.get_ai_agent()
         # Installed here and not by run_ai_agent: this command drives the agent itself,
         # to hand it the version the module is written for, and used to start it with
-        # none of the skills its prompt sends it to.
-        self._ensure_skills(self.required_skills, handler=agent.handler)
+        # none of the skills its prompt sends it to. source_branch is the worktree the
+        # module is written against, so its version's source skills are the ones to add.
+        agent.handler.ensure_skills_discoverable()
+        ensure_skills(self.odev, self.config, self.required_skills, version=source_branch)
 
         sandbox_dirs = self._get_sandbox_dirs(self.scaffold_database_name, cwd=self.args.path)
         working_dir = Path(sandbox_dirs[0]) if sandbox_dirs else self.args.path.resolve()
