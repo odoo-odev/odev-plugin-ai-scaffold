@@ -108,7 +108,6 @@ class TaskReader:
         # Many2one fields are read as an (id, display_name) pair.
         partner = task.get("partner_id")
         task["client"] = partner[1] if partner else None
-        task["attachments"] = self._attachments(task["id"])
 
         return task
 
@@ -209,26 +208,6 @@ class TaskReader:
             if version := DATABASE_VERSION.search(database["version"] or ""):
                 task["odoo_version"] = version.group()
                 break
-
-    def _attachments(self, task_id: int) -> list[dict[str, Any]]:
-        """Return the files attached to the task, description images excluded.
-
-        Attachments live in ir.attachment, so reading the task never includes them.
-        ``res_field`` is False for a file added to the chatter, and set to the field
-        name for an image embedded in one, which :meth:`_add_description_images` handles.
-        """
-        try:
-            return self.database.models["ir.attachment"].search_read(
-                [
-                    ("res_model", "=", TASK_MODEL),
-                    ("res_id", "=", task_id),
-                    ("res_field", "=", False),
-                ],
-                fields=["name", "mimetype", "datas"],
-            )
-        except Exception:  # noqa: BLE001 - an unreadable attachment must not cost us the task
-            logger.debug(f"Could not read the attachments of task {task_id}.", exc_info=True)
-            return []
 
     def _add_description_images(self, task: dict[str, Any]) -> None:
         """Pull the images out of the description, leaving a name where each one was.

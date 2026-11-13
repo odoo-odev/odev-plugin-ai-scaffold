@@ -171,11 +171,6 @@ class Analysis:
         return self.data.get("databases") or []
 
     @property
-    def attachments(self) -> list[dict[str, Any]]:
-        """Files attached to the task, as ``name`` / ``mimetype`` / ``datas`` dicts."""
-        return self.data.get("attachments") or []
-
-    @property
     def database(self) -> dict[str, Any] | None:
         """The client database to work against, asking which one when there are several."""
         if self._database is not None:
