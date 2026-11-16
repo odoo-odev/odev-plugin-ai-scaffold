@@ -93,6 +93,9 @@ class TaskReader:
                 [("id", "=", int(task_id))],
                 fields=fields,
                 order="create_date DESC",
+                # odev forwards load=None as is, which makes the server return a
+                # many2one as a bare id instead of an (id, display_name) pair.
+                load="_classic_read",
             )
 
         if not tasks:
@@ -120,7 +123,7 @@ class TaskReader:
         the task over an optional field is worse than reading it without that field.
         """
         try:
-            remote_fields = self.database.models[TASK_MODEL].fields_get(TASK_FIELDS)
+            remote_fields = self.database.models[TASK_MODEL].fields_get()
         except Exception:  # noqa: BLE001
             logger.debug("Could not read the fields of the remote task, asking for all of them.", exc_info=True)
             return TASK_FIELDS
