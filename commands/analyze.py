@@ -57,6 +57,14 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
 
     process: OdoobinProcess | None = None
     initiate_excalidraw: bool = True
+    initiate_mcp: bool = False
+    """Whether the analysis is delivered to an external tracker rather than printed.
+
+    The base has nowhere to deliver, so it prints the analysis in the conversation and
+    leaves this off. A plugin that does deliver turns it on and reads it to wire up its
+    server - and :meth:`run` turns it back off for a pasted analysis, which has no task
+    to deliver against.
+    """
     _database_hints: dict[str, Any] | None = None
 
     @property
@@ -74,13 +82,27 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
 
         # An analysis is about one task, so give it a playground of its own: the
         # diagrams and images written for it are named after their place in that task's
-        # description, and two tasks sharing a directory overwrite each other's.
-        self.sandbox_scope = str(args.task_id)
+        # description, and two tasks sharing a directory overwrite each other's. A
+        # pasted analysis has no task number to name it after, so it gets a fixed one.
+        self.sandbox_scope = str(args.task_id) if args.task_id else "pasted"
 
         super().__init__(args, **kwargs)
 
     def run(self) -> None:
-        analysis = self._load_analysis()
+        if not self.is_pasted and not self.args.task_id:
+            raise self.error(
+                "Nothing to analyze: pass a task id, or --paste / --paste-file to hand the analysis in."
+            )
+
+        # The paste branch is settled here, above _load_analysis, so that a plugin
+        # delivering the analysis to a tracker - which overrides _load_analysis to read
+        # the task its own way - gets pasted input for free: there is no task to read or
+        # deliver against, so delivery is off and the analysis is printed instead.
+        if self.is_pasted:
+            self.initiate_mcp = False
+            analysis = self._pasted_analysis()
+        else:
+            analysis = self._load_analysis()
 
         if analysis is None:
             return
@@ -146,7 +168,9 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
 
         Its own seam, rather than a call inlined in :meth:`run`: a plugin holding
         written analyses of its own swaps :attr:`analysis_factory`, or overrides this,
-        without having to reimplement the rest of the command.
+        without having to reimplement the rest of the command. A pasted analysis never
+        reaches here - :meth:`run` builds it before this is called, so an override that
+        only knows how to read a task does not have to grow a paste branch of its own.
         """
         return self.analysis_factory.get_analysis(
             self.args.task_id,
@@ -334,7 +358,14 @@ class AnalyzeCommand(DatabaseCommand, ListLocalDatabasesMixin, AICommandMixin, C
         had to remember a flag to get it read the standard source instead. Nothing is
         cloned without asking - see :meth:`_confirm_repository_clone` - so a run that
         wants none of it costs one answer.
+
+        A pasted analysis has no task, so no subscription to find the client code from:
+        it is analyzed against the standard source alone, the same as when the lookup
+        comes back empty.
         """
+        if self.is_pasted:
+            return
+
         self._set_support_reason(self.args.task_id, "analysis")
         self.sandbox_repository = self._resolve_client_repository(analysis)
 

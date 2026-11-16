@@ -11,6 +11,7 @@ from odev.common.version import OdooVersion
 
 from odev.plugins.odev_plugin_ai.common.mixins import AICommandMixin
 from odev.plugins.odev_plugin_ai_scaffold.common.analysis import Analysis, AnalysisFactory
+from odev.plugins.odev_plugin_ai_scaffold.common.paste import PasteAnalysisMixin
 from odev.plugins.odev_plugin_ai_scaffold.common.repository import ClientRepositoryMixin
 
 
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from odev.common.errors import CommandError
 
 
-class Scaffold(AICommandMixin, ClientRepositoryMixin):
+class Scaffold(AICommandMixin, ClientRepositoryMixin, PasteAnalysisMixin):
     """Command line arguments of the scaffolding commands, and the analysis behind them."""
 
     if TYPE_CHECKING:
@@ -111,8 +112,13 @@ class Scaffold(AICommandMixin, ClientRepositoryMixin):
 
         An explicit ``--path`` says the developer already knows where the code is, and
         settles it for every plugin: nothing is resolved, and the directory that was
-        asked for is the one used.
+        asked for is the one used. A pasted analysis settles it the same way: there is
+        no task, so no subscription to read a client repository from - the module is
+        written where the command was called.
         """
+        if self.is_pasted:
+            return
+
         if self.args.path.resolve() != Path.cwd().resolve():
             return
 
@@ -175,8 +181,12 @@ class Scaffold(AICommandMixin, ClientRepositoryMixin):
         """Load the analysis of the task, unless one was handed over already.
 
         ``quickstart`` reads it before the database exists, to know which database the
-        task points at, and passes it on rather than paying for it twice.
+        task points at, and passes it on rather than paying for it twice. ``--paste`` /
+        ``--paste-file`` skip the tracker entirely and build it from what is handed in.
         """
+        if not self.analysis_obj and self.is_pasted:
+            self.analysis_obj = self._pasted_analysis()
+
         if not self.analysis_obj:
             with progress.spinner(f"Loading the analysis of task {self.args.task_id}"):
                 analysis_obj = self.analysis_factory.get_analysis(

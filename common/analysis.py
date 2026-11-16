@@ -13,6 +13,7 @@ first and fall back to the task.
 from __future__ import annotations
 
 import base64
+import re
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 MANY2ONE_PAIR_SIZE = 2
 """A many2one field is read over RPC as an ``(id, display_name)`` pair."""
+
+HTML_TAG = re.compile(r"<[a-zA-Z/][^>]*>")
+"""Enough to tell a description that is markup from one that is plain text."""
 
 
 class AnalysisFactory:
@@ -54,6 +58,25 @@ class AnalysisFactory:
 
         logger.info(f"Task {task_id} found on {task_url}.")
         return Analysis(task_id, task, load_excalidraw)
+
+    @staticmethod
+    def from_pasted(content: str, load_excalidraw: bool = True) -> Analysis:
+        """Build an analysis from content handed in directly, with no task behind it.
+
+        Used when the analysis is pasted by hand rather than read off the tracker:
+        there is no remote task, so no subscription or database comes with it. The
+        pasted content is the whole of it, Excalidraw links included - those are found
+        in it and exported the same as a task's - and the version is taken from the
+        command line.
+        """
+        # "0" is the codebase's empty version: OdooVersion("0") is falsy, so
+        # Scaffold._resolve_version falls through to -V or the interactive prompt
+        # rather than silently scaffolding for master.
+        return Analysis(
+            task_id="",
+            data={"description": content, "odoo_version": "0"},
+            load_excalidraw=load_excalidraw,
+        )
 
 
 class Analysis:
@@ -104,10 +127,15 @@ class Analysis:
         return None
 
     def parse(self) -> str:
-        """Return the description of the task as plain text, images pulled out of it."""
-        description_html = self.data.get("description")
+        """Return the description as plain text, images and links stripped out of it.
 
-        if not description_html or not isinstance(description_html, str):
+        A task description is HTML, but an analysis pasted by hand can be plain text:
+        run through html2text it would come back with its ``<``, ``&`` and ``*`` read
+        as markup, so text that is already text is returned as it stands.
+        """
+        description = self.data.get("description")
+
+        if not description or not isinstance(description, str):
             return ""
 
         # Only the urls are collected here. Playwright is started later, when the
@@ -116,14 +144,21 @@ class Analysis:
         # where those prompts fail with "asyncio.run() cannot be called from a running
         # event loop".
         if self.load_excalidraw:
-            self.excalidraw_urls = find_diagram_urls(description_html)
+            self.excalidraw_urls = find_diagram_urls(description)
 
             if self.excalidraw_urls:
                 logger.info(f"Found {len(self.excalidraw_urls)} Excalidraw url(s) in the description.")
 
+        if not HTML_TAG.search(description):
+            return description.strip()
+
         h = html2text.HTML2Text()
         h.ignore_links = True
-        return h.handle(description_html).strip()
+        # Inline images are base64 payloads or /web/image urls - noise and cost in a
+        # prompt the agent only reads as text. The images that matter are the ones
+        # pulled out as files by save_embedded_images, reachable all the same.
+        h.ignore_images = True
+        return h.handle(description).strip()
 
     def save_embedded_images(self, artifacts_dir: Path) -> list[Path]:
         """Write the images of the description to ``artifacts_dir``, return their paths.

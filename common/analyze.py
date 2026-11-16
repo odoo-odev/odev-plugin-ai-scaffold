@@ -2,11 +2,15 @@
 
 from odev.common import args
 
+from odev.plugins.odev_plugin_ai_scaffold.common.paste import PasteAnalysisMixin
 
-class Analyze:
+
+class Analyze(PasteAnalysisMixin):
     """Command line arguments shared by ``odev analyze`` and what extends it."""
 
-    task_id = args.String(description="Id of the task to analyze")
+    # Optional: a task is one way to say what to analyze, pasting it in by hand - see
+    # PasteAnalysisMixin - is the other, and a run gives exactly one of the two.
+    task_id = args.String(description="Id of the task to analyze", nargs="?")
     no_excalidraw = args.Flag(
         aliases=["-e", "--no-excalidraw"],
         description="Do not export the Excalidraw diagrams the task links to",
