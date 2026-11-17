@@ -133,7 +133,7 @@ class BasePrompt:
             "priority instructions": self._get_comment_prompt(),
             "task": self._get_task_prompt(),
             "instructions": self._get_main_prompt(),
-            "screenshots": self._get_embedded_images_prompt(artifacts_dir),
+            "screenshots": self._get_embedded_images_prompt(artifacts_dir) + self._get_image_links_prompt(),
         }
 
         if analysis_obj.load_excalidraw:
@@ -235,6 +235,22 @@ class BasePrompt:
             f"The task description embeds {len(image_paths)} image(s), exported for you to: "
             f"{', '.join(f'`{path}`' for path in image_paths)}.",
             "Read them: the description refers to each of them by that same file name, where the picture belonged.",
+        ]
+
+    def _get_image_links_prompt(self) -> list[str]:
+        """Tell the agent to load the images a pasted description keeps as links.
+
+        A pasted analysis has no task behind it to fetch images from, so they stay in the
+        description as the links they were copied as. The agent loads each one itself.
+        """
+        links = self.analysis_obj.image_links
+
+        if not links:
+            return []
+
+        return [
+            f"The task description keeps {len(links)} image(s) as link(s): {', '.join(f'`{link}`' for link in links)}.",
+            "Load each one and read it as the picture the text points to there, where the link stands.",
         ]
 
     def _get_excalidraw_prompt(self, artifacts_dir: Path | None = None) -> list[str]:

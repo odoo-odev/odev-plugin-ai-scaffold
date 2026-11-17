@@ -35,6 +35,31 @@ MANY2ONE_PAIR_SIZE = 2
 HTML_TAG = re.compile(r"<[a-zA-Z/][^>]*>")
 """Enough to tell a description that is markup from one that is plain text."""
 
+# An ``<img>`` whose src is a base64 ``data:`` payload rather than a url. A pasted
+# description keeps its images as links for the agent to fetch; an inline data URI is
+# no link, and a single screenshot of one blows past the 128kB the kernel allows a
+# command line - so those are dropped rather than carried into the prompt.
+DATA_URI_IMG = re.compile(r"""<img\b[^>]*\bsrc\s*=\s*["']data:[^"']*["'][^>]*>""", re.IGNORECASE)
+
+# The image links left in a parsed (markdown) description, as ``![alt](url)``.
+MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*(\S+?)\s*\)")
+
+
+def _drop_data_uri_images(content: str) -> str:
+    """Strip inline ``data:`` images from pasted HTML, leaving url images untouched.
+
+    A description copied from the browser can carry a screenshot inline as a base64
+    ``data:`` URI. That is no link to hand the agent, and the payload alone can overrun
+    the command line the prompt reaches the agent on, so the tag is removed. An ``<img>``
+    pointing at a url is left in place, kept in the prompt for the agent to load.
+    """
+    content, dropped = DATA_URI_IMG.subn("", content)
+
+    if dropped:
+        logger.info(f"Dropped {dropped} inline data-URI image(s) from the pasted analysis (no link to fetch).")
+
+    return content
+
 
 class AnalysisFactory:
     """Build an :class:`Analysis` from wherever the analysis of a task is kept."""
@@ -67,8 +92,11 @@ class AnalysisFactory:
         there is no remote task, so no subscription or database comes with it. The
         pasted content is the whole of it, Excalidraw links included - those are found
         in it and exported the same as a task's - and the version is taken from the
-        command line.
+        command line. Its images are kept as links in the text for the agent to load;
+        only inline ``data:`` images, which are no link and too big for the prompt, are
+        dropped.
         """
+        content = _drop_data_uri_images(content)
         # "0" is the codebase's empty version: OdooVersion("0") is falsy, so
         # Scaffold._resolve_version falls through to -V or the interactive prompt
         # rather than silently scaffolding for master.
@@ -76,6 +104,7 @@ class AnalysisFactory:
             task_id="",
             data={"description": content, "odoo_version": "0"},
             load_excalidraw=load_excalidraw,
+            keep_image_links=True,
         )
 
 
@@ -91,14 +120,25 @@ class Analysis:
     description: str | None
     excalidraw_urls: list[str]
     load_excalidraw: bool
+    keep_image_links: bool
     existing_module_name: str
     depends: list[str]
 
-    def __init__(self, task_id: str, data: dict[str, Any], load_excalidraw: bool = True):
+    def __init__(
+        self,
+        task_id: str,
+        data: dict[str, Any],
+        load_excalidraw: bool = True,
+        keep_image_links: bool = False,
+    ):
         self.data = data
         self.client_name = data.get("client")
         self.owner_name = self.parse_owner()
         self.task_id = task_id
+        # A pasted description keeps its image references in the text; one read off the
+        # tracker has its images inlined as urls or base64 and dropped from it, provided
+        # as files instead. See parse().
+        self.keep_image_links = keep_image_links
         # Resolved from the databases the customer's subscription carries, and left
         # empty when it carries none: an analysis makes no sense without them, so the
         # command asks for whatever is missing.
@@ -154,10 +194,11 @@ class Analysis:
 
         h = html2text.HTML2Text()
         h.ignore_links = True
-        # Inline images are base64 payloads or /web/image urls - noise and cost in a
-        # prompt the agent only reads as text. The images that matter are the ones
-        # pulled out as files by save_embedded_images, reachable all the same.
-        h.ignore_images = True
+        # A task read off the tracker has its images fetched and handed over as files,
+        # so the img tags are dropped from the text here. A pasted description keeps them
+        # as links: there is nothing fetched behind it, so the agent loads them itself
+        # (the inline data: ones, which are no link, were dropped by _drop_data_uri_images).
+        h.ignore_images = not self.keep_image_links
         return h.handle(description).strip()
 
     def save_embedded_images(self, artifacts_dir: Path) -> list[Path]:
@@ -199,6 +240,19 @@ class Analysis:
         The description refers to each by its ``name``, where the picture stood.
         """
         return self.data.get("description_images") or []
+
+    @property
+    def image_links(self) -> list[str]:
+        """The image urls a pasted description keeps inline, for the agent to load.
+
+        Empty for a task read off the tracker - its images are fetched and handed over
+        as files instead (:attr:`embedded_images`). A pasted analysis keeps them as the
+        links they were copied as; the prompt tells the agent to load each one.
+        """
+        if not self.keep_image_links or not self.description:
+            return []
+
+        return MARKDOWN_IMAGE.findall(self.description)
 
     @property
     def databases(self) -> list[dict[str, Any]]:

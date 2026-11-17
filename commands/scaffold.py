@@ -118,6 +118,13 @@ class ScaffoldCommand(DatabaseCommand, ListLocalDatabasesMixin, Scaffold):
                 "to each by that same file name, where the picture belonged.\n"
             )
 
+        if image_links := analysis.image_links:
+            prompt_str += (
+                f"\nThe task description keeps {len(image_links)} image(s) as link(s): "
+                f"{', '.join(image_links)}. Load each one and read it as the picture the text points "
+                "to there, where the link stands.\n"
+            )
+
         if diagram_paths := analysis.export_excalidraw_diagrams(artifacts_dir, self.odev):
             prompt_str += (
                 f"\n{len(diagram_paths)} Excalidraw architecture diagram(s) were exported for you to: "
